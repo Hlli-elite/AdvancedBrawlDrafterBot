@@ -559,6 +559,72 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
         </div>
       </div>
     </div>
+    <!-- OVERRIDES TAB -->
+    <div id="tab-overrides" class="tab-content">
+      <div class="ctx-bar">
+        <span class="ctx-label">Edit overrides here, then click <b style="color:var(--amber)">Export JSON</b> → upload <code>overrides.json</code> to your GitHub repo to save permanently.</span>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="tier-btn" id="ov-import-btn">Import JSON</button>
+          <input type="file" id="ov-import-file" accept=".json" class="hidden">
+          <button class="tier-btn primary" id="ov-export-btn">Export JSON</button>
+          <button class="tier-btn" id="ov-reset-btn" style="color:var(--red);border-color:rgba(239,68,68,.4)">Reset All</button>
+        </div>
+      </div>
+      <div style="padding:20px 24px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:28px">
+
+        <!-- Score adjustments -->
+        <div>
+          <div class="sec-hdr">Score Adjustments</div>
+          <p style="color:var(--text3);font-size:.78rem;margin-bottom:14px;font-family:var(--mono)">
+            Directly adjust a brawler's final score. Range: -20 to +20. Positive = stronger, negative = weaker.
+            Use this when you know from experience a brawler is over/underrated by the data.
+          </p>
+          <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
+            <input class="tbl-search" id="ov-adj-search" placeholder="Search brawler…" style="width:180px">
+          </div>
+          <div id="ov-adj-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px"></div>
+        </div>
+
+        <!-- Ban priorities -->
+        <div>
+          <div class="sec-hdr">Ban Priorities</div>
+          <p style="color:var(--text3);font-size:.78rem;margin-bottom:14px;font-family:var(--mono)">
+            Force a brawler to always appear at the top of ban suggestions, or never appear.
+          </p>
+          <div id="ov-ban-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+
+        <!-- Matchup overrides -->
+        <div>
+          <div class="sec-hdr">Matchup Overrides</div>
+          <p style="color:var(--text3);font-size:.78rem;margin-bottom:14px;font-family:var(--mono)">
+            Manually set a matchup win rate when you know the data is wrong or missing.
+            Format: Brawler A vs Brawler B. This overrides matchup data from API.
+          </p>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <select class="ctx-select" id="ov-mu-a" style="width:160px"><option value="">Brawler A</option></select>
+            <span style="color:var(--text3);font-family:var(--mono);font-size:.8rem">wins vs</span>
+            <select class="ctx-select" id="ov-mu-b" style="width:160px"><option value="">Brawler B</option></select>
+            <span style="color:var(--text3);font-family:var(--mono);font-size:.8rem">at</span>
+            <input class="tbl-search" id="ov-mu-wr" type="number" min="0" max="100" placeholder="Win%" style="width:80px">
+            <span style="color:var(--text3);font-family:var(--mono);font-size:.8rem">% win rate</span>
+            <button class="tier-btn primary" id="ov-mu-add">Add Override</button>
+          </div>
+          <div id="ov-mu-list" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+
+        <!-- Notes -->
+        <div>
+          <div class="sec-hdr">General Notes</div>
+          <textarea id="ov-notes" placeholder="Freeform notes about the current meta, maps, patch changes..." 
+            style="width:100%;min-height:120px;background:var(--bg2);border:1px solid var(--border2);
+            border-radius:8px;padding:12px;color:var(--text);font-family:var(--mono);font-size:.8rem;
+            resize:vertical;outline:none;line-height:1.5"></textarea>
+        </div>
+
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -656,7 +722,7 @@ async function loadModeData(mode) {
   }
 }
 
-function onDataLoaded() {
+async function onDataLoaded() {
   // Update header meta
   document.getElementById('meta-battles').innerHTML = `BATTLES <b>${META.battles.toLocaleString()}</b>`;
   document.getElementById('meta-players').innerHTML = `PLAYERS <b>${META.players.toLocaleString()}</b>`;
@@ -673,6 +739,7 @@ function onDataLoaded() {
   populateModeSelects();
   initDraft();
   initTierList();
+  await initOverrides();
   initMatchup();
   initStats();
 
@@ -1148,11 +1215,69 @@ function rawWR(name, bs) {
   return s.wins / (s.wins + s.losses);
 }
 
+// ── Matchup confidence scoring ───────────────────────────────────────────────
+//
+// Raw win rates from small samples are unreliable. We use a Bayesian approach:
+// shrink observed WR toward 0.5 based on sample size. With few games the result
+// stays near 0.5 (uncertain). With many games it converges to the observed rate.
+//
+// Formula: credible_wr = (wins + prior_strength * 0.5) / (total + prior_strength)
+// prior_strength = 20 means we need ~20 games before the data outweighs the prior.
+//
+// Additionally, we compute a "counter strength" that only fires when:
+//   - The matchup is statistically meaningful (enough games)
+//   - The relationship is consistent (win rate clearly above/below 50%)
+//   - Both directions are checked (A beats B AND B loses to A)
+
+const PRIOR_STRENGTH = 20;  // games needed before data outweighs 50/50 prior
+const MIN_GAMES_WEAK = 5;   // minimum games to show any matchup data
+const MIN_GAMES_STRONG = 20; // minimum games to treat as reliable counter signal
+
+function bayesianWR(wins, losses) {
+  // Bayesian credible win rate — shrinks toward 0.5 with small samples
+  const total = wins + losses;
+  return (wins + PRIOR_STRENGTH * 0.5) / (total + PRIOR_STRENGTH);
+}
+
+function matchupConfidence(wins, losses) {
+  // 0 = no confidence (tiny sample), 1 = full confidence (large sample)
+  const total = wins + losses;
+  return Math.min(1, total / MIN_GAMES_STRONG);
+}
+
 function matchupWR(attacker, defender, ms) {
-  // attacker's WR when facing defender
+  // Check human override first — these are always trusted fully
+  const ovKey    = `${attacker}|${defender}`;
+  const ovKeyRev = `${defender}|${attacker}`;
+  if (OVERRIDES.matchups[ovKey]    !== undefined) return OVERRIDES.matchups[ovKey];
+  if (OVERRIDES.matchups[ovKeyRev] !== undefined) return 1 - OVERRIDES.matchups[ovKeyRev];
+
   const rec = ms[attacker] && ms[attacker][defender];
-  if (!rec || rec.wins + rec.losses < 3) return null;
-  return rec.wins / (rec.wins + rec.losses);
+  if (!rec) return null;
+  const total = rec.wins + rec.losses;
+  if (total < MIN_GAMES_WEAK) return null;  // not enough data
+
+  return bayesianWR(rec.wins, rec.losses);
+}
+
+function matchupStrength(attacker, defender, ms) {
+  // Returns a counter strength value:
+  //   > 0.5 = attacker wins (stronger = more reliable counter)
+  //   < 0.5 = attacker loses
+  //   = 0.5 = no meaningful counter relationship
+  // Accounts for sample size via confidence weighting.
+
+  const rec = ms[attacker] && ms[attacker][defender];
+  if (!rec) return 0.5;
+  const total = rec.wins + rec.losses;
+  if (total < MIN_GAMES_WEAK) return 0.5;
+
+  const bwr  = bayesianWR(rec.wins, rec.losses);
+  const conf = matchupConfidence(rec.wins, rec.losses);
+
+  // Shrink toward 0.5 based on confidence
+  // Low confidence = stays near 0.5, high confidence = shows true WR
+  return 0.5 + (bwr - 0.5) * conf;
 }
 
 function tierScore(name) {
@@ -1165,30 +1290,81 @@ function maxPicksInCtx(bs) {
 }
 
 // Counter score: how well does [candidate] do against a list of [targets]?
-// Returns 0–1. Uses matchup data when available, falls back to raw WR diff.
+// Uses Bayesian matchup strength — small samples stay near 0.5.
+// Falls back to raw WR difference only when truly no matchup data exists.
 function counterScoreVs(candidate, targets, bs, ms) {
   if (targets.length === 0) return 0.5;
+
   const scores = targets.map(t => {
-    const mu = matchupWR(candidate, t, ms);
-    if (mu !== null) return mu;
-    // No direct matchup data — approximate via WR difference
+    const rec = ms[candidate] && ms[candidate][t];
+    const total = rec ? rec.wins + rec.losses : 0;
+
+    if (total >= MIN_GAMES_WEAK) {
+      // Use Bayesian matchup strength — reliable counter signal
+      return matchupStrength(candidate, t, ms);
+    }
+
+    // Check reverse direction too (maybe we have B vs A data)
+    const recRev = ms[t] && ms[t][candidate];
+    const totalRev = recRev ? recRev.wins + recRev.losses : 0;
+    if (totalRev >= MIN_GAMES_WEAK) {
+      return 1 - matchupStrength(t, candidate, ms);
+    }
+
+    // No matchup data at all — approximate via raw WR diff, heavily dampened
     const cwr = rawWR(candidate, bs);
     const twr = rawWR(t, bs);
-    return 0.5 + (cwr - twr) * 0.4;
+    return 0.5 + (cwr - twr) * 0.2; // dampened: raw WR diff is weak signal
   });
-  return scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  // Weight each score by how many games back it up
+  // High-confidence matchups pull the average more than low-confidence ones
+  const weighted = targets.map(t => {
+    const rec    = ms[candidate] && ms[candidate][t];
+    const recRev = ms[t] && ms[t][candidate];
+    const total  = Math.max(
+      rec    ? rec.wins + rec.losses    : 0,
+      recRev ? recRev.wins + recRev.losses : 0
+    );
+    return Math.min(1, total / MIN_GAMES_STRONG);
+  });
+
+  const totalWeight = weighted.reduce((a, b) => a + b, 0);
+  if (totalWeight === 0) {
+    // All low-confidence — just average
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  }
+
+  // Weighted average: high-confidence matchups dominate
+  const weightedSum = scores.reduce((sum, s, i) => sum + s * (weighted[i] + 0.1), 0);
+  const weightTotal = weighted.reduce((sum, w) => sum + w + 0.1, 0);
+  return weightedSum / weightTotal;
 }
 
-// Vulnerability score: how badly is [candidate] countered by [aggressors]?
-// Returns 0 (terrible) to 1 (safe). Inverse of counterScoreVs.
+// Safety score: how safe is [candidate] against [aggressors]?
+// Returns 0 (gets destroyed) to 1 (very safe).
 function safetyScoreVs(candidate, aggressors, bs, ms) {
   if (aggressors.length === 0) return 0.5;
-  const scores = aggressors.map(a => {
-    const mu = matchupWR(a, candidate, ms); // aggressor's WR vs candidate
-    if (mu !== null) return 1 - mu;         // candidate's survival rate
-    return 0.5;
+
+  const scores = aggressors.map(aggressor => {
+    const strength = matchupStrength(aggressor, candidate, ms);
+    // strength > 0.5 means aggressor beats candidate → candidate is unsafe
+    return 1 - strength; // flip: candidate's safety vs this aggressor
   });
-  return scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  // Weight by confidence same as above
+  const weighted = aggressors.map(aggressor => {
+    const rec = ms[aggressor] && ms[aggressor][candidate];
+    const total = rec ? rec.wins + rec.losses : 0;
+    return Math.min(1, total / MIN_GAMES_STRONG);
+  });
+
+  const totalWeight = weighted.reduce((a, b) => a + b, 0);
+  if (totalWeight === 0) return scores.reduce((a, b) => a + b, 0) / scores.length;
+
+  const weightedSum = scores.reduce((sum, s, i) => sum + s * (weighted[i] + 0.1), 0);
+  const weightTotal = weighted.reduce((sum, w) => sum + w + 0.1, 0);
+  return weightedSum / weightTotal;
 }
 
 // Predict N most likely enemy picks from the remaining pool
@@ -1201,8 +1377,11 @@ function predictEnemyPicks(n, taken, bs, ms, enemyPicked) {
       const wr  = rawWR(b, bs);
       const tier = tierScore(b);
       // Enemy picks what is strong on this map + counters our current picks
+      // Use counterScoreVs which is confidence-weighted
       const ctr = counterScoreVs(b, draftAllies, bs, ms);
-      return { name: b, score: 0.40 * wr + 0.35 * ctr + 0.25 * tier };
+      // Also factor in pick rate as a proxy for how likely they are to pick it
+      const pickRate = s.picks / Math.max(1, ...Object.values(bs).map(x=>x.picks));
+      return { name: b, score: 0.35 * wr + 0.35 * ctr + 0.20 * tier + 0.10 * pickRate };
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score)
@@ -1247,9 +1426,9 @@ function scorePick(name, ctx) {
     );
 
     // For each likely enemy response, how badly does it counter our candidate?
+    // Use matchupStrength which is confidence-weighted (small samples stay near 0.5)
     const futureThreats = likelyEnemyPicks.map(ep => {
-      const mu = matchupWR(ep, name, ms); // enemy's WR vs our candidate
-      return mu !== null ? mu : 0.5;
+      return matchupStrength(ep, name, ms); // confidence-weighted threat
     });
 
     // Worst-case threat (the enemy pick that hurts us most)
@@ -1294,9 +1473,12 @@ function scorePick(name, ctx) {
   }
 
   const baseScore = wWR * wr + wCounter * counterNow + wSafety * safetyNow + wTier * tier;
-  const finalScore = baseScore - LOOKAHEAD_WEIGHT * Math.max(0, lookaheadPenalty);
+  const lookaheadScore = baseScore - LOOKAHEAD_WEIGHT * Math.max(0, lookaheadPenalty);
 
-  return Math.max(0, Math.min(1, finalScore));
+  // Human override: score adjustment (-20..+20 mapped to -0.2..+0.2)
+  const humanAdj = getScoreAdj(name);
+
+  return Math.max(0, Math.min(1, lookaheadScore + humanAdj));
 }
 
 // ── Ban scorer ────────────────────────────────────────────────────────────────
@@ -1311,6 +1493,13 @@ function scoreBan(name, ctx, forEnemy) {
   const tier  = tierScore(name);
   const taken = allTaken();
   const maxP  = maxPicksInCtx(bs);
+
+  // Human ban priority overrides
+  const banPri = getBanPriority(name);
+  if (forEnemy) {
+    if (banPri === 'always') return 1.0;   // force to top of ban list
+    if (banPri === 'never')  return -1.0;  // force off ban list
+  }
 
   if (forEnemy) {
     // We are deciding what to ban — remove from the enemy pool.
@@ -1513,8 +1702,11 @@ function suggestionCard(c, i, isBan, isYours) {
     const simTaken = new Set([...taken, c.name]);
     const likely = predictEnemyPicks(3, simTaken, bs, ms, draftEnemies);
     const worst = likely.map(ep => {
-      const mu = matchupWR(ep, c.name, ms);
-      return mu !== null ? {b: ep, mu} : null;
+      const strength = matchupStrength(ep, c.name, ms);
+      // Only flag if confidence is meaningful (enough games)
+      const rec = ms[ep] && ms[ep][c.name];
+      const total = rec ? rec.wins + rec.losses : 0;
+      return total >= MIN_GAMES_WEAK ? {b: ep, mu: strength} : null;
     }).filter(Boolean).sort((a,b) => b.mu - a.mu)[0];
     if (worst && worst.mu > 0.55) {
       worstNote = `<div style="margin-top:5px;font-family:var(--mono);font-size:.62rem;color:var(--red);opacity:.8">
@@ -1807,6 +1999,249 @@ function renderStats() {
   }).join('');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OVERRIDES
+// ═══════════════════════════════════════════════════════════════════════════
+
+// OVERRIDES structure:
+// {
+//   adjustments: { EDGAR: 5, MORTIS: -3, ... }   score deltas (-20 to +20)
+//   banPriority: { MORTIS: 'always', COLT: 'never', ... }
+//   matchups: { "EDGAR|MORTIS": 0.62, ... }       manual WR overrides
+//   notes: "..."
+// }
+
+let OVERRIDES = {
+  adjustments: {},
+  banPriority: {},
+  matchups: {},
+  notes: ''
+};
+
+async function loadOverrides() {
+  try {
+    const r = await fetch('overrides.json');
+    if (r.ok) {
+      const raw = await r.json();
+      // Strip __comment and __example keys (they're just documentation)
+      OVERRIDES.adjustments = stripComments(raw.adjustments || {});
+      OVERRIDES.banPriority  = stripComments(raw.banPriority  || {});
+      OVERRIDES.matchups     = stripComments(raw.matchups     || {});
+      OVERRIDES.notes        = raw.notes || '';
+      console.log('overrides.json loaded');
+    }
+  } catch(e) {
+    console.warn('Could not load overrides.json:', e);
+  }
+}
+
+function stripComments(obj) {
+  // Remove keys starting with __ (documentation keys in the JSON template)
+  return Object.fromEntries(
+    Object.entries(obj).filter(([k]) => !k.startsWith('__'))
+  );
+}
+
+function saveOverrides() {
+  // Overrides are now file-based — the Export button lets you download
+  // the updated file to commit to your repo
+  console.log('Overrides are file-based. Use Export to save changes.');
+}
+
+// Apply override matchup on top of data matchup
+function getMatchupWR(a, b, ms) {
+  const key = `${a}|${b}`;
+  const keyRev = `${b}|${a}`;
+  if (OVERRIDES.matchups[key]   !== undefined) return OVERRIDES.matchups[key];
+  if (OVERRIDES.matchups[keyRev] !== undefined) return 1 - OVERRIDES.matchups[keyRev];
+  const rec = ms[a] && ms[a][b];
+  if (!rec || rec.wins + rec.losses < 3) return null;
+  return rec.wins / (rec.wins + rec.losses);
+}
+
+// Score adjustment getter
+function getScoreAdj(name) {
+  return (OVERRIDES.adjustments[name] || 0) / 100;  // convert -20..+20 to -0.2..+0.2
+}
+
+// Ban priority getter: 'always' | 'never' | undefined
+function getBanPriority(name) {
+  return OVERRIDES.banPriority[name];
+}
+
+async function initOverrides() {
+  await loadOverrides();
+  renderOverridesTab();
+
+  document.getElementById('ov-export-btn').addEventListener('click', () => {
+    // Export as overrides.json — upload this file to your GitHub repo to save changes
+    const exportData = {
+      adjustments: OVERRIDES.adjustments,
+      banPriority:  OVERRIDES.banPriority,
+      matchups:     OVERRIDES.matchups,
+      notes:        OVERRIDES.notes,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'overrides.json';
+    a.click();
+  });
+
+  document.getElementById('ov-import-btn').addEventListener('click', () => {
+    document.getElementById('ov-import-file').click();
+  });
+  document.getElementById('ov-import-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        OVERRIDES = JSON.parse(ev.target.result);
+        saveOverrides();
+        renderOverridesTab();
+      } catch { alert('Invalid JSON'); }
+    };
+    reader.readAsText(file);
+  });
+
+  document.getElementById('ov-reset-btn').addEventListener('click', () => {
+    if (!confirm('Reset all overrides? This cannot be undone.')) return;
+    OVERRIDES = {adjustments:{}, banPriority:{}, matchups:{}, notes:''};
+    renderOverridesTab();
+  });
+
+  document.getElementById('ov-adj-search').addEventListener('input', renderAdjList);
+
+  document.getElementById('ov-mu-add').addEventListener('click', () => {
+    const a  = document.getElementById('ov-mu-a').value;
+    const b  = document.getElementById('ov-mu-b').value;
+    const wr = parseFloat(document.getElementById('ov-mu-wr').value);
+    if (!a || !b || a === b || isNaN(wr) || wr < 0 || wr > 100) {
+      alert('Pick two different brawlers and a win rate 0-100.');
+      return;
+    }
+    OVERRIDES.matchups[`${a}|${b}`] = wr / 100;
+    saveOverrides();
+    renderMuOverrideList();
+    document.getElementById('ov-mu-wr').value = '';
+  });
+
+  document.getElementById('ov-notes').value = OVERRIDES.notes;
+  document.getElementById('ov-notes').addEventListener('input', e => {
+    OVERRIDES.notes = e.target.value;
+    saveOverrides();
+  });
+}
+
+function renderOverridesTab() {
+  // Populate brawler selects
+  const brawlers = allBrawlers();
+  ['ov-mu-a','ov-mu-b'].forEach(id => {
+    const el = document.getElementById(id);
+    const cur = el.value;
+    el.innerHTML = '<option value="">Select brawler</option>' +
+      brawlers.map(b => `<option value="${b}" ${b===cur?'selected':''}>${b}</option>`).join('');
+  });
+
+  renderAdjList();
+  renderBanPriorityList();
+  renderMuOverrideList();
+  document.getElementById('ov-notes').value = OVERRIDES.notes;
+}
+
+function renderAdjList() {
+  const search  = document.getElementById('ov-adj-search').value.toLowerCase();
+  const brawlers = allBrawlers().filter(b => b.toLowerCase().includes(search));
+  const container = document.getElementById('ov-adj-list');
+
+  container.innerHTML = brawlers.map(b => {
+    const val = OVERRIDES.adjustments[b] || 0;
+    const col = val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--text3)';
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+      padding:10px 14px;display:flex;align-items:center;gap:10px">
+      <span style="font-family:var(--display);font-weight:700;font-size:.9rem;flex:1">${b}</span>
+      <button class="tier-btn" onclick="adjBrawler('${b}',-5)" style="padding:3px 8px;font-size:.8rem">−5</button>
+      <button class="tier-btn" onclick="adjBrawler('${b}',-1)" style="padding:3px 8px;font-size:.8rem">−1</button>
+      <span style="font-family:var(--mono);font-weight:700;font-size:.9rem;color:${col};min-width:36px;text-align:center">
+        ${val > 0 ? '+' : ''}${val}
+      </span>
+      <button class="tier-btn" onclick="adjBrawler('${b}',1)" style="padding:3px 8px;font-size:.8rem">+1</button>
+      <button class="tier-btn" onclick="adjBrawler('${b}',5)" style="padding:3px 8px;font-size:.8rem">+5</button>
+      ${val !== 0 ? `<button class="tier-btn" onclick="adjBrawler('${b}',0,true)" style="padding:3px 8px;font-size:.75rem;color:var(--muted)">✕</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function adjBrawler(name, delta, reset=false) {
+  if (reset) {
+    delete OVERRIDES.adjustments[name];
+  } else {
+    const cur = OVERRIDES.adjustments[name] || 0;
+    OVERRIDES.adjustments[name] = Math.max(-20, Math.min(20, cur + delta));
+    if (OVERRIDES.adjustments[name] === 0) delete OVERRIDES.adjustments[name];
+  }
+  saveOverrides();
+  renderAdjList();
+}
+
+function renderBanPriorityList() {
+  const container = document.getElementById('ov-ban-list');
+  const brawlers  = allBrawlers();
+
+  container.innerHTML = brawlers.map(b => {
+    const p   = OVERRIDES.banPriority[b];
+    const col = p === 'always' ? 'var(--red)' : p === 'never' ? 'var(--blue)' : 'var(--border2)';
+    const lbl = p === 'always' ? '🚫 Always Ban' : p === 'never' ? '✅ Never Ban' : b;
+    return `<div style="border:1px solid ${col};border-radius:6px;padding:5px 10px;
+      background:${p?'var(--bg3)':'var(--bg2)'};cursor:pointer;font-size:.78rem;
+      font-family:var(--display);font-weight:700;display:flex;align-items:center;gap:6px"
+      onclick="cycleBanPriority('${b}')">
+      <span style="color:${col}">${lbl}</span>
+    </div>`;
+  }).join('');
+}
+
+function cycleBanPriority(name) {
+  const cur = OVERRIDES.banPriority[name];
+  if (!cur)           OVERRIDES.banPriority[name] = 'always';
+  else if (cur === 'always') OVERRIDES.banPriority[name] = 'never';
+  else                delete OVERRIDES.banPriority[name];
+  saveOverrides();
+  renderBanPriorityList();
+}
+
+function renderMuOverrideList() {
+  const container = document.getElementById('ov-mu-list');
+  const entries   = Object.entries(OVERRIDES.matchups);
+
+  if (!entries.length) {
+    container.innerHTML = '<div style="color:var(--text3);font-family:var(--mono);font-size:.78rem">No matchup overrides yet.</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map(([key, wr]) => {
+    const [a, b] = key.split('|');
+    const pct    = (wr * 100).toFixed(0);
+    const col    = wr >= 0.52 ? 'var(--green)' : wr <= 0.48 ? 'var(--red)' : 'var(--text)';
+    return `<div style="display:flex;align-items:center;gap:10px;background:var(--bg2);
+      border:1px solid var(--border);border-radius:8px;padding:8px 14px">
+      <span style="font-family:var(--display);font-weight:700;flex:1">${a}</span>
+      <span style="font-family:var(--mono);font-size:.75rem;color:var(--text3)">vs</span>
+      <span style="font-family:var(--display);font-weight:700;flex:1">${b}</span>
+      <span style="font-family:var(--mono);font-weight:700;color:${col};min-width:48px;text-align:right">${pct}% WR</span>
+      <button class="tier-btn" onclick="removeMuOverride('${key}')" 
+        style="color:var(--red);border-color:rgba(239,68,68,.3);padding:3px 8px">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function removeMuOverride(key) {
+  delete OVERRIDES.matchups[key];
+  saveOverrides();
+  renderMuOverrideList();
+}
+
 // ── TABS ──────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -1814,7 +2249,12 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     const target = document.getElementById(`tab-${tab.dataset.tab}`);
-    if (target) target.classList.add('active');
+    if (target) {
+      target.classList.add('active');
+      target.style.display = 'flex';
+    }
+    // Re-render overrides tab when opened so brawler lists are fresh
+    if (tab.dataset.tab === 'overrides' && META) renderOverridesTab();
   });
 });
 
