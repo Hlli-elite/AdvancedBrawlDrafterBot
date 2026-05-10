@@ -1504,42 +1504,52 @@ function scoreBan(name, ctx, forEnemy) {
   if (forEnemy) {
     // We are deciding what to ban — remove from the enemy pool.
     //
-    // Key question: "If we DON'T ban this brawler, and the enemy picks it,
-    // how much does it hurt us?"
+    // Key insight: don't ban a brawler that is ALSO a strong pick for us.
+    // If EDGAR is both a threat AND our best pick, we should pick him, not ban him.
     //
-    // = enemy's pick value × probability they'd actually pick it
+    // Ban score = threat_to_us − own_pick_value
+    // High threat + low own value = great ban
+    // High threat + high own value = pick him yourself instead
+    // Low threat = don't ban regardless
 
-    // How much does this brawler threaten our current + likely future picks?
-    const allAllies = [...draftAllies];
-    // Also consider what we are likely to pick (top meta picks we haven't chosen yet)
+    // How much does this brawler threaten our projected comp?
+    const projectedAllies = [...draftAllies];
     const likelyOurPicks = allBrawlers()
-      .filter(b => !taken.has(b) && !allAllies.includes(b))
-      .map(b => ({ name: b, wr: rawWR(b, bs) }))
-      .sort((a, b) => b.wr - a.wr)
+      .filter(b => !taken.has(b) && !projectedAllies.includes(b))
+      .map(b => ({ name: b, score: scorePick(b, ctx) }))
+      .filter(x => x.score !== null)
+      .sort((a, b) => b.score - a.score)
       .slice(0, 3)
       .map(x => x.name);
-    const projectedAllies = [...allAllies, ...likelyOurPicks];
+    const projectedWithFuture = [...projectedAllies, ...likelyOurPicks];
 
-    const threatVsUs = counterScoreVs(name, projectedAllies, bs, ms);
+    const threatVsUs = counterScoreVs(name, projectedWithFuture, bs, ms);
 
+    // How good would this brawler be as OUR pick?
+    // If it's a top pick for us, penalise banning it
+    const ownPickValue = scorePick(name, ctx) || 0;
+    // Normalise: scorePick returns 0-1, scale to 0-0.3 penalty range
+    const selfPickPenalty = ownPickValue * 0.40;
+
+    let rawBanScore;
     if (side === 'second') {
       // Enemy has first pick → ban their strongest options
-      // (priority: high WR + high tier + threatens our comp)
-      return 0.35 * wr + 0.25 * tier + 0.40 * threatVsUs;
+      rawBanScore = 0.35 * wr + 0.25 * tier + 0.40 * threatVsUs;
     } else {
-      // We have first pick → ban brawlers that would counter our likely picks
-      // Find top meta picks to protect
+      // We have first pick → ban counters to top meta picks
       const topMeta = allBrawlers()
         .filter(b => !taken.has(b))
         .map(b => ({ name: b, wr: rawWR(b, bs) }))
         .sort((a, b) => b.wr - a.wr)
         .slice(0, 5)
         .map(x => x.name);
-
-      // How well does [name] counter the meta?
       const countersTopMeta = counterScoreVs(name, topMeta, bs, ms);
-      return 0.25 * wr + 0.20 * tier + 0.55 * countersTopMeta;
+      rawBanScore = 0.25 * wr + 0.20 * tier + 0.55 * countersTopMeta;
     }
+
+    // Subtract self-pick penalty: if this is also a great pick for us,
+    // don't waste the ban — pick it yourself instead
+    return Math.max(0, rawBanScore - selfPickPenalty);
   } else {
     // Predicting enemy bans — they'll remove our strongest options
     const ourStrength = wr * 0.55 + tier * 0.30 + (s.picks / maxP) * 0.15;
