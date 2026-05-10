@@ -352,6 +352,41 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 .sc-val{font-family:var(--mono);font-size:1.5rem;font-weight:700;color:var(--accent,var(--amber));line-height:1}
 .sc-label{font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:4px;font-family:var(--mono)}
 
+/* ── DRAFT ORDER BAR ──────────────────────────────────────────────────────── */
+.order-slot{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:4px 8px;border-radius:4px;border:1px solid var(--border);
+  background:var(--bg2);min-width:52px;flex-shrink:0;
+}
+.order-slot.current{border-color:var(--amber);background:var(--amber-dim);animation:glow .8s ease-in-out infinite alternate}
+.order-slot.done{opacity:.4}
+.order-slot.ban-slot{border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.06)}
+.order-slot.ban-slot.current{border-color:var(--red);background:var(--red-dim)}
+@keyframes glow{from{box-shadow:0 0 4px rgba(245,166,35,.3)}to{box-shadow:0 0 10px rgba(245,166,35,.6)}}
+.os-label{font-size:.58rem;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.os-team{font-size:.65rem;font-weight:700;letter-spacing:.5px}
+.os-brawler{font-size:.62rem;color:var(--text2);max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+
+/* ── BAN SLOT ─────────────────────────────────────────────────────────────── */
+.ban-slot-item{
+  border:1px solid rgba(239,68,68,.3);border-radius:5px;
+  padding:6px 10px;display:flex;align-items:center;gap:8px;
+  background:rgba(239,68,68,.06);font-size:.8rem;min-height:36px;
+}
+.ban-slot-item.filled{border-color:var(--red)}
+.ban-slot-item .slot-name{font-family:var(--display);font-weight:700;font-size:.85rem;flex:1}
+.ban-slot-item .slot-empty{color:var(--text3);font-size:.75rem;font-style:italic}
+
+/* ── ENEMY SLOTS (compact) ────────────────────────────────────────────────── */
+.enemy-slot-item{
+  border:1px solid rgba(239,68,68,.2);border-radius:5px;
+  padding:5px 10px;display:flex;align-items:center;gap:8px;
+  background:rgba(239,68,68,.04);font-size:.78rem;min-height:32px;
+}
+.enemy-slot-item.filled{border-color:var(--red)}
+.enemy-slot-item .slot-name{font-family:var(--display);font-weight:700;font-size:.82rem;flex:1}
+.enemy-slot-item .slot-empty{color:var(--text3);font-size:.72rem;font-style:italic}
+
 /* ── SCROLLBARS ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -396,15 +431,36 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
         <select class="ctx-select" id="draft-mode"><option value="all|all">All Modes</option></select>
         <span class="ctx-label">Map</span>
         <select class="ctx-select" id="draft-map"><option value="">All Maps</option></select>
-        <span style="margin-left:auto;font-family:var(--mono);font-size:.7rem;color:var(--text3)">Click brawler → add as ally &nbsp;|&nbsp; Shift+click → add as enemy</span>
+        <span class="ctx-label" style="margin-left:16px">Side</span>
+        <select class="ctx-select" id="draft-side">
+          <option value="first">First Pick</option>
+          <option value="second">Second Pick</option>
+        </select>
+        <span class="ctx-label" style="margin-left:16px">Phase</span>
+        <select class="ctx-select" id="draft-phase">
+          <option value="ban">Ban Phase</option>
+          <option value="pick">Pick Phase</option>
+        </select>
+        <button class="tier-btn" id="draft-reset" style="margin-left:auto">Reset Draft</button>
       </div>
+
+      <!-- Draft order indicator -->
+      <div id="draft-order-bar" style="
+        display:flex;align-items:center;gap:6px;padding:8px 24px;
+        background:var(--bg1);border-bottom:1px solid var(--border);
+        font-family:var(--mono);font-size:.72rem;flex-shrink:0;overflow-x:auto;
+      "></div>
+
       <div class="draft-layout">
-        <!-- Allies -->
-        <div class="team-panel allies">
-          <div class="sec-hdr">Your Team</div>
+        <!-- Left: bans + your team -->
+        <div class="team-panel allies" style="min-width:200px">
+          <div class="sec-hdr" style="font-size:.75rem">Your Bans</div>
+          <div id="ally-ban-slots" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+          <div class="sec-hdr" style="font-size:.75rem">Your Team</div>
           <div id="ally-slots"></div>
         </div>
-        <!-- Brawler grid -->
+
+        <!-- Center: brawler grid -->
         <div class="brawler-grid-panel">
           <div class="grid-toolbar">
             <input class="grid-search" id="grid-search" placeholder="Search brawler…" type="text">
@@ -413,10 +469,21 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
           </div>
           <div class="brawler-grid" id="brawler-grid"></div>
         </div>
-        <!-- Suggestions -->
-        <div class="suggestions-panel">
-          <div class="sec-hdr">Suggestions</div>
-          <div id="suggestions-list"><div class="no-picks">Pick allies and enemies to see suggestions</div></div>
+
+        <!-- Right: enemy + suggestions -->
+        <div style="display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border)">
+          <!-- Enemy bans + team (compact) -->
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+            <div class="sec-hdr" style="font-size:.75rem;margin-bottom:8px">Enemy Bans</div>
+            <div id="enemy-ban-slots" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px"></div>
+            <div class="sec-hdr" style="font-size:.75rem;margin-bottom:8px">Enemy Team</div>
+            <div id="enemy-slots" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
+          <!-- Suggestions -->
+          <div class="suggestions-panel" style="flex:1;overflow-y:auto">
+            <div class="sec-hdr" id="suggestions-title">Suggestions</div>
+            <div id="suggestions-list"><div class="no-picks">Set up the draft to see suggestions</div></div>
+          </div>
         </div>
       </div>
     </div>
@@ -750,16 +817,87 @@ function fmtMode(m) {
 // ═══════════════════════════════════════════════════════════════════════════
 // DRAFT
 // ═══════════════════════════════════════════════════════════════════════════
+
+/*
+  Draft order in Brawl Stars ranked:
+  Ban phase (alternating, enemy bans first if you are first pick):
+    If first pick:  enemy ban → your ban → enemy ban → your ban → enemy ban → your ban
+    If second pick: your ban  → enemy ban → your ban  → enemy ban → your ban  → enemy ban
+  Pick phase (snake draft):
+    First pick:  pick 1, pick 4, pick 5
+    Second pick: pick 2, pick 3, pick 6
+*/
+
+let draftAllies   = [];   // picked ally brawlers
+let draftEnemies  = [];   // picked enemy brawlers
+let draftAllyBans = [];   // banned by your team
+let draftEnemyBans= [];   // banned by enemy team
+let gridFilter    = 'all';
+let gridSearch    = '';
+
+// Draft sequence definition
+// Each step: {phase:'ban'|'pick', team:'ally'|'enemy', slot: index within that team}
+function getDraftSequence(side) {
+  // side: 'first' or 'second'
+  // Ban order: second-pick team bans first in each pair
+  const banOrder = side === 'first'
+    ? ['enemy','ally','enemy','ally','enemy','ally']
+    : ['ally','enemy','ally','enemy','ally','enemy'];
+
+  const pickOrder = side === 'first'
+    ? ['ally','enemy','enemy','ally','ally','enemy']
+    : ['enemy','ally','ally','enemy','enemy','ally'];
+
+  const seq = [];
+  const banCount = {ally:0, enemy:0};
+  banOrder.forEach(team => {
+    seq.push({phase:'ban', team, slot: banCount[team]++});
+  });
+  const pickCount = {ally:0, enemy:0};
+  pickOrder.forEach(team => {
+    seq.push({phase:'pick', team, slot: pickCount[team]++});
+  });
+  return seq;
+}
+
+function getCurrentStepIndex() {
+  const seq = getDraftSequence(document.getElementById('draft-side').value);
+  for (let i = 0; i < seq.length; i++) {
+    const s = seq[i];
+    const pool = s.phase === 'ban'
+      ? (s.team === 'ally' ? draftAllyBans : draftEnemyBans)
+      : (s.team === 'ally' ? draftAllies   : draftEnemies);
+    if (pool.length <= s.slot) return i;
+  }
+  return seq.length; // draft complete
+}
+
+function allBanned() {
+  return new Set([...draftAllyBans, ...draftEnemyBans]);
+}
+function allTaken() {
+  return new Set([...draftAllies, ...draftEnemies, ...draftAllyBans, ...draftEnemyBans]);
+}
+
 function initDraft() {
+  renderDraftOrderBar();
   renderTeamSlots();
+  renderEnemySlots();
   renderBrawlerGrid();
   renderSuggestions();
+
+  document.getElementById('draft-reset').addEventListener('click', () => {
+    draftAllies = []; draftEnemies = [];
+    draftAllyBans = []; draftEnemyBans = [];
+    renderDraft();
+  });
+
+  document.getElementById('draft-side').addEventListener('change', renderDraft);
 
   document.getElementById('grid-search').addEventListener('input', e => {
     gridSearch = e.target.value.toLowerCase();
     renderBrawlerGrid();
   });
-
   document.querySelectorAll('.grid-filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.grid-filter-btn').forEach(b => b.classList.remove('on'));
@@ -770,117 +908,172 @@ function initDraft() {
   });
 }
 
+function renderDraftOrderBar() {
+  const side = document.getElementById('draft-side').value;
+  const seq  = getDraftSequence(side);
+  const cur  = getCurrentStepIndex();
+  const bar  = document.getElementById('draft-order-bar');
+
+  bar.innerHTML = seq.map((s, i) => {
+    const isCur  = i === cur;
+    const isDone = i < cur;
+    const isBan  = s.phase === 'ban';
+    const pool   = s.phase === 'ban'
+      ? (s.team === 'ally' ? draftAllyBans : draftEnemyBans)
+      : (s.team === 'ally' ? draftAllies   : draftEnemies);
+    const brawler = pool[s.slot] || '';
+    const teamLabel = s.team === 'ally' ? 'YOU' : 'ENEMY';
+    const teamColor = s.team === 'ally' ? 'var(--blue)' : 'var(--red)';
+
+    return `<div class="order-slot ${isBan ? 'ban-slot' : ''} ${isCur ? 'current' : ''} ${isDone ? 'done' : ''}">
+      <span class="os-label" style="color:${isBan ? 'var(--red)' : 'var(--text3)'}">${isBan ? 'BAN' : 'PICK'} ${s.slot+1}</span>
+      <span class="os-team" style="color:${teamColor}">${teamLabel}</span>
+      <span class="os-brawler">${brawler || (isCur ? '▶' : '—')}</span>
+    </div>`;
+  }).join('<span style="color:var(--border2);font-size:.8rem;align-self:center">›</span>');
+}
+
 function renderTeamSlots() {
+  // Ally bans
+  const allyBanEl = document.getElementById('ally-ban-slots');
+  allyBanEl.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const b = draftAllyBans[i];
+    const el = document.createElement('div');
+    el.className = 'ban-slot-item' + (b ? ' filled' : '');
+    el.innerHTML = b
+      ? `<span style="color:var(--red);font-size:.8rem">🚫</span><span class="slot-name" style="color:var(--red)">${b}</span>
+         <button class="slot-remove" data-pool="allyBan" data-name="${b}">✕</button>`
+      : `<span style="color:var(--red);opacity:.4;font-size:.8rem">🚫</span><span class="slot-empty">Ban slot ${i+1}</span>`;
+    allyBanEl.appendChild(el);
+  }
+
+  // Ally picks
   const allyEl = document.getElementById('ally-slots');
-  const MAX = 3;
   allyEl.innerHTML = '';
-  for (let i = 0; i < MAX; i++) {
+  for (let i = 0; i < 3; i++) {
     const b = draftAllies[i];
-    const slot = document.createElement('div');
-    slot.className = 'team-slot allies' + (b ? ' filled ally' : '');
-    if (b) {
-      const wr = getBrawlerWR(b, getDraftCtxKey());
-      slot.innerHTML = `
-        <span class="slot-name">${b}</span>
-        <span class="slot-wr">${wr !== null ? (wr*100).toFixed(1)+'%' : '—'}</span>
-        <button class="slot-remove" data-team="ally" data-name="${b}">✕</button>`;
-    } else {
-      slot.innerHTML = `<span class="slot-empty">Empty slot</span>`;
-    }
-    allyEl.appendChild(slot);
+    const ctx = getDraftCtxKey();
+    const wr  = b ? getBrawlerWR(b, ctx) : null;
+    const el  = document.createElement('div');
+    el.className = 'team-slot allies' + (b ? ' filled ally' : '');
+    el.innerHTML = b
+      ? `<span class="slot-name">${b}</span>
+         <span class="slot-wr" style="color:${wrColor(wr)}">${wr !== null ? (wr*100).toFixed(1)+'%' : '—'}</span>
+         <button class="slot-remove" data-pool="ally" data-name="${b}">✕</button>`
+      : `<span class="slot-empty">Pick slot ${i+1}</span>`;
+    allyEl.appendChild(el);
   }
 
-  // Enemy slots — find or create container
-  let enemyEl = document.getElementById('enemy-slots');
-  if (!enemyEl) {
-    // They're rendered directly in the enemies team-panel
-    return;
-  }
-
-  // Attach remove listeners
-  allyEl.querySelectorAll('.slot-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const name = btn.dataset.name;
-      draftAllies = draftAllies.filter(x => x !== name);
-      renderDraft();
+  // Wire remove buttons
+  [allyBanEl, allyEl].forEach(container => {
+    container.querySelectorAll('.slot-remove').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const pool = btn.dataset.pool;
+        const name = btn.dataset.name;
+        if (pool === 'allyBan') draftAllyBans = draftAllyBans.filter(x => x !== name);
+        if (pool === 'ally')    draftAllies   = draftAllies.filter(x => x !== name);
+        renderDraft();
+      });
     });
   });
 }
 
 function renderEnemySlots() {
-  // Enemies panel is separate
-  const panel = document.querySelector('.team-panel.enemies');
-  if (!panel) return;
-  // Clear existing slots
-  const existing = panel.querySelectorAll('.team-slot');
-  existing.forEach(s => s.remove());
-  const MAX = 3;
-  for (let i = 0; i < MAX; i++) {
-    const b = draftEnemies[i];
-    const slot = document.createElement('div');
-    slot.className = 'team-slot enemies' + (b ? ' filled' : '');
-    if (b) {
-      const wr = getBrawlerWR(b, getDraftCtxKey());
-      slot.innerHTML = `
-        <span class="slot-name">${b}</span>
-        <span class="slot-wr">${wr !== null ? (wr*100).toFixed(1)+'%' : '—'}</span>
-        <button class="slot-remove" data-team="enemy" data-name="${b}">✕</button>`;
-    } else {
-      slot.innerHTML = `<span class="slot-empty">Empty slot</span>`;
-    }
-    panel.appendChild(slot);
+  // Enemy bans
+  const enemyBanEl = document.getElementById('enemy-ban-slots');
+  enemyBanEl.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const b = draftEnemyBans[i];
+    const el = document.createElement('div');
+    el.className = 'ban-slot-item' + (b ? ' filled' : '');
+    el.innerHTML = b
+      ? `<span style="color:var(--red);font-size:.8rem">🚫</span><span class="slot-name" style="color:var(--red)">${b}</span>
+         <button class="slot-remove" data-pool="enemyBan" data-name="${b}">✕</button>`
+      : `<span style="color:var(--red);opacity:.4;font-size:.8rem">🚫</span><span class="slot-empty">Ban slot ${i+1}</span>`;
+    enemyBanEl.appendChild(el);
   }
-  panel.querySelectorAll('.slot-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const name = btn.dataset.name;
-      draftEnemies = draftEnemies.filter(x => x !== name);
-      renderDraft();
+
+  // Enemy picks
+  const enemyEl = document.getElementById('enemy-slots');
+  enemyEl.innerHTML = '';
+  for (let i = 0; i < 3; i++) {
+    const b = draftEnemies[i];
+    const ctx = getDraftCtxKey();
+    const wr  = b ? getBrawlerWR(b, ctx) : null;
+    const el  = document.createElement('div');
+    el.className = 'enemy-slot-item' + (b ? ' filled' : '');
+    el.innerHTML = b
+      ? `<span class="slot-name">${b}</span>
+         <span class="slot-wr" style="color:${wrColor(wr)}">${wr !== null ? (wr*100).toFixed(1)+'%' : '—'}</span>
+         <button class="slot-remove" data-pool="enemy" data-name="${b}">✕</button>`
+      : `<span class="slot-empty">Pick slot ${i+1}</span>`;
+    enemyEl.appendChild(el);
+  }
+
+  // Wire remove buttons
+  [enemyBanEl, enemyEl].forEach(container => {
+    container.querySelectorAll('.slot-remove').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const pool = btn.dataset.pool;
+        const name = btn.dataset.name;
+        if (pool === 'enemyBan') draftEnemyBans = draftEnemyBans.filter(x => x !== name);
+        if (pool === 'enemy')    draftEnemies   = draftEnemies.filter(x => x !== name);
+        renderDraft();
+      });
     });
   });
 }
 
 function renderBrawlerGrid() {
-  const grid = document.getElementById('brawler-grid');
-  const ctx  = getDraftCtxKey();
-  const bs   = getBrawlerStats(ctx);
-  const taken = new Set([...draftAllies, ...draftEnemies]);
+  const grid   = document.getElementById('brawler-grid');
+  const ctx    = getDraftCtxKey();
+  const bs     = getBrawlerStats(ctx);
+  const taken  = allTaken();
 
   let brawlers = allBrawlers();
   if (gridSearch) brawlers = brawlers.filter(b => b.toLowerCase().includes(gridSearch));
   if (gridFilter === 'available') brawlers = brawlers.filter(b => !taken.has(b));
 
   grid.innerHTML = brawlers.map(b => {
-    const s = bs[b];
-    const wr = s && s.wins + s.losses > 0 ? s.wins / (s.wins + s.losses) : null;
+    const s   = bs[b];
+    const wr  = s && s.wins + s.losses > 0 ? s.wins / (s.wins + s.losses) : null;
     const tier = TIERLIST[b] || '';
-    const isAlly  = draftAllies.includes(b);
-    const isEnemy = draftEnemies.includes(b);
-    const cls = isAlly ? 'as-ally' : isEnemy ? 'as-enemy' : taken.has(b) ? 'unavailable' : '';
-    return `<div class="brawler-card ${cls}" data-name="${b}">
+    const isAlly    = draftAllies.includes(b);
+    const isEnemy   = draftEnemies.includes(b);
+    const isAllyBan = draftAllyBans.includes(b);
+    const isEnemyBan= draftEnemyBans.includes(b);
+    let cls = '';
+    if (isAlly || isAllyBan) cls = 'as-ally';
+    else if (isEnemy || isEnemyBan) cls = 'as-enemy';
+    else if (taken.has(b)) cls = 'unavailable';
+
+    return `<div class="brawler-card ${cls}" data-name="${b}" title="${b}${isAllyBan?' (banned by you)':isEnemyBan?' (banned by enemy)':''}">
       ${tier ? `<div class="bc-tier tier-${tier}">${tier}</div>` : ''}
+      ${isAllyBan || isEnemyBan ? '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:1.2rem;opacity:.6">🚫</div>' : ''}
       <div class="bc-name">${b}</div>
       <div class="bc-wr" style="color:${wrColor(wr)}">${wr !== null ? (wr*100).toFixed(1)+'%' : '—'}</div>
     </div>`;
   }).join('');
 
-  grid.querySelectorAll('.brawler-card').forEach(card => {
+  grid.querySelectorAll('.brawler-card:not(.unavailable)').forEach(card => {
     card.addEventListener('click', e => {
       const name = card.dataset.name;
-      const asEnemy = e.shiftKey;
-      if (asEnemy) {
-        if (draftEnemies.includes(name)) {
-          draftEnemies = draftEnemies.filter(x => x !== name);
-        } else if (draftEnemies.length < 3 && !draftAllies.includes(name)) {
-          draftEnemies.push(name);
-        }
+      if (allTaken().has(name)) return;
+
+      const seq = getDraftSequence(document.getElementById('draft-side').value);
+      const cur = getCurrentStepIndex();
+      if (cur >= seq.length) return;
+
+      const step = seq[cur];
+      if (step.phase === 'ban') {
+        if (step.team === 'ally' && draftAllyBans.length < 3)   draftAllyBans.push(name);
+        if (step.team === 'enemy' && draftEnemyBans.length < 3) draftEnemyBans.push(name);
       } else {
-        if (draftAllies.includes(name)) {
-          draftAllies = draftAllies.filter(x => x !== name);
-        } else if (draftAllies.length < 3 && !draftEnemies.includes(name)) {
-          draftAllies.push(name);
-        }
+        if (step.team === 'ally' && draftAllies.length < 3)   draftAllies.push(name);
+        if (step.team === 'enemy' && draftEnemies.length < 3) draftEnemies.push(name);
       }
       renderDraft();
     });
@@ -888,6 +1081,7 @@ function renderBrawlerGrid() {
 }
 
 function renderDraft() {
+  renderDraftOrderBar();
   renderTeamSlots();
   renderEnemySlots();
   renderBrawlerGrid();
@@ -895,8 +1089,8 @@ function renderDraft() {
 }
 
 function getBrawlerWR(name, ctx) {
-  const bs = getBrawlerStats(ctx);
-  const s  = bs[name];
+  const bs  = getBrawlerStats(ctx);
+  const s   = bs[name];
   if (!s) return null;
   const dec = s.wins + s.losses;
   return dec > 0 ? s.wins / dec : null;
@@ -904,13 +1098,15 @@ function getBrawlerWR(name, ctx) {
 
 function wrColor(wr) {
   if (wr === null) return 'var(--text3)';
-  if (wr >= 0.52) return 'var(--green)';
-  if (wr >= 0.48) return 'var(--amber)';
+  if (wr >= 0.52)  return 'var(--green)';
+  if (wr >= 0.48)  return 'var(--amber)';
   return 'var(--red)';
 }
 
 // ── SCORING ───────────────────────────────────────────────────────────────────
-function scoreBrawler(name, ctx) {
+function scoreBan(name, ctx) {
+  // Ban score: how threatening is this brawler?
+  // High WR + high tier + counters our likely picks = should be banned
   const bs  = getBrawlerStats(ctx);
   const ms  = getMatchupStats(ctx);
   const s   = bs[name];
@@ -918,7 +1114,33 @@ function scoreBrawler(name, ctx) {
 
   const wr = s.wins / (s.wins + s.losses);
 
-  // Counter score: average WR vs each enemy
+  // How badly does this brawler beat our current picks?
+  let threatScore = 0.5;
+  if (draftAllies.length > 0) {
+    const threats = draftAllies.map(ally => {
+      const rec = ms[name] && ms[name][ally];
+      if (!rec || rec.wins + rec.losses < 3) return 0.5;
+      return rec.wins / (rec.wins + rec.losses);
+    });
+    threatScore = threats.reduce((a, b) => a + b, 0) / threats.length;
+  }
+
+  // Tier bonus — high tier brawlers are more ban-worthy
+  const tier = TIERLIST[name];
+  const tierVal = {S:1, A:0.85, B:0.7, C:0.55, D:0.4, F:0.25}[tier] || 0.5;
+
+  return 0.35 * wr + 0.40 * threatScore + 0.25 * tierVal;
+}
+
+function scorePick(name, ctx) {
+  const bs  = getBrawlerStats(ctx);
+  const ms  = getMatchupStats(ctx);
+  const s   = bs[name];
+  if (!s || s.picks < 5) return null;
+
+  const wr = s.wins / (s.wins + s.losses);
+
+  // Counter score vs each enemy pick
   let counterScore = 0.5;
   if (draftEnemies.length > 0) {
     const wrs = draftEnemies.map(enemy => {
@@ -926,98 +1148,147 @@ function scoreBrawler(name, ctx) {
       if (!rec || rec.wins + rec.losses < 3) return 0.5;
       return rec.wins / (rec.wins + rec.losses);
     });
-    counterScore = wrs.reduce((a,b) => a+b, 0) / wrs.length;
+    counterScore = wrs.reduce((a, b) => a + b, 0) / wrs.length;
   }
 
-  // Synergy score: average WR when ally is present
-  // (approx via team comp data — fallback to 0.5 if not enough data)
+  // Synergy score with already-picked allies
   let synergyScore = 0.5;
+  if (draftAllies.length > 0) {
+    // Proxy: if ally also has high WR, they probably work well together
+    // True synergy needs team comp data — use pairwise matchup as approximation
+    const syn = draftAllies.map(ally => {
+      const allyS = bs[ally];
+      if (!allyS) return 0.5;
+      return allyS.wins / (allyS.wins + allyS.losses);
+    });
+    synergyScore = syn.reduce((a, b) => a + b, 0) / syn.length;
+    synergyScore = 0.5 + (synergyScore - 0.5) * 0.5; // dampen
+  }
+
+  // Pick order awareness
+  const side = document.getElementById('draft-side').value;
+  const pickSlot = draftAllies.length; // 0, 1, 2
+  // Early picks: prioritise safe high-WR brawlers (less counter weight)
+  // Late picks: prioritise hard counters (more counter weight)
+  const counterWeight = side === 'first'
+    ? [0.30, 0.40, 0.50][pickSlot] || 0.40
+    : [0.35, 0.45, 0.55][pickSlot] || 0.45;
+  const wrWeight      = 0.90 - counterWeight - 0.10;
 
   // Tier bonus
   const tier = TIERLIST[name];
   const tierBonus = {S:0.08, A:0.05, B:0.02, C:0, D:-0.02, F:-0.05}[tier] || 0;
 
-  // Weights
-  const W_WR      = 0.35;
-  const W_COUNTER = 0.40;
-  const W_SYNERGY = 0.15;
-  const W_TIER    = 0.10;
-
-  const score = W_WR * wr + W_COUNTER * counterScore + W_SYNERGY * synergyScore + W_TIER * (0.5 + tierBonus);
-  return { score, wr, counterScore, synergyScore, tierBonus, picks: s.picks };
+  return wrWeight * wr + counterWeight * counterScore + 0.10 * (synergyScore + tierBonus);
 }
 
 function renderSuggestions() {
-  const list = document.getElementById('suggestions-list');
-  const ctx  = getDraftCtxKey();
-  const taken = new Set([...draftAllies, ...draftEnemies]);
+  const list  = document.getElementById('suggestions-list');
+  const title = document.getElementById('suggestions-title');
+  const ctx   = getDraftCtxKey();
+  const taken = allTaken();
 
-  if (draftAllies.length === 0 && draftEnemies.length === 0) {
-    list.innerHTML = '<div class="no-picks">Pick allies and enemies to see suggestions</div>';
-    return;
-  }
-  if (draftAllies.length >= 3) {
-    list.innerHTML = '<div class="no-picks">Your team is full</div>';
-    return;
-  }
+  const seq = getDraftSequence(document.getElementById('draft-side').value);
+  const cur = getCurrentStepIndex();
 
-  const candidates = allBrawlers()
-    .filter(b => !taken.has(b))
-    .map(b => ({ name: b, ...scoreBrawler(b, ctx) }))
-    .filter(b => b.score !== null)
-    .sort((a,b) => b.score - a.score)
-    .slice(0, 15);
-
-  if (candidates.length === 0) {
-    list.innerHTML = '<div class="no-picks">Not enough data for suggestions</div>';
+  if (cur >= seq.length) {
+    title.textContent = '✅ Draft Complete';
+    list.innerHTML = '<div class="no-picks">Draft is finished. Good luck!</div>';
     return;
   }
 
-  const maxScore = candidates[0].score;
+  const step = seq[cur];
+  const isBan  = step.phase === 'ban';
+  const isYour = step.team === 'ally';
 
-  list.innerHTML = candidates.map((c, i) => {
-    const barW = (c.score / maxScore * 100).toFixed(1);
-    const wrPct = (c.wr * 100).toFixed(1);
-    const ctrPct = (c.counterScore * 100).toFixed(1);
-    return `<div class="suggestion-card" data-name="${c.name}">
-      <div class="sg-header">
-        <span class="sg-rank">${i+1}</span>
-        <span class="sg-name">${c.name}</span>
-        ${TIERLIST[c.name] ? `<span class="bc-tier tier-${TIERLIST[c.name]}">${TIERLIST[c.name]}</span>` : ''}
-        <span class="sg-score">${(c.score*100).toFixed(1)}</span>
-      </div>
-      <div class="sg-bars">
-        <div class="sg-bar-row">
-          <span class="sg-bar-label">Win Rate</span>
-          <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${wrPct}%;background:${wrColor(c.wr)}"></div></div>
-          <span class="sg-bar-val" style="color:${wrColor(c.wr)}">${wrPct}%</span>
-        </div>
-        <div class="sg-bar-row">
-          <span class="sg-bar-label">vs Enemies</span>
-          <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${ctrPct}%;background:${wrColor(c.counterScore)}"></div></div>
-          <span class="sg-bar-val" style="color:${wrColor(c.counterScore)}">${ctrPct}%</span>
-        </div>
-        <div class="sg-bar-row">
-          <span class="sg-bar-label">Score</span>
-          <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${barW}%;background:var(--amber)"></div></div>
-          <span class="sg-bar-val a">${(c.score*100).toFixed(1)}</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+  if (!isYour) {
+    // Enemy turn — show what we predict they'll pick/ban
+    title.textContent = isBan ? '🔮 Enemy Ban — Predicted Threats' : '🔮 Enemy Pick — Predicted';
+    const candidates = allBrawlers()
+      .filter(b => !taken.has(b))
+      .map(b => ({ name: b, score: isBan ? scoreBan(b, ctx) : scorePick(b, ctx) }))
+      .filter(b => b.score !== null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+    list.innerHTML = candidates.length
+      ? candidates.map((c, i) => suggestionCard(c, i, isBan, false)).join('')
+      : '<div class="no-picks">Not enough data</div>';
+    return;
+  }
 
-  // Click suggestion → add as ally
+  // Your turn
+  if (isBan) {
+    title.textContent = '🚫 Your Ban — Recommended';
+    // Score enemy brawlers by how threatening they are to you
+    const candidates = allBrawlers()
+      .filter(b => !taken.has(b))
+      .map(b => ({ name: b, score: scoreBan(b, ctx) }))
+      .filter(b => b.score !== null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+    list.innerHTML = candidates.length
+      ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
+      : '<div class="no-picks">Not enough data</div>';
+  } else {
+    const pickNum = draftAllies.length + 1;
+    const pickLabel = ['1st', '2nd', '3rd'][draftAllies.length] || '';
+    title.textContent = `⚔ Your ${pickLabel} Pick`;
+    const candidates = allBrawlers()
+      .filter(b => !taken.has(b))
+      .map(b => ({ name: b, score: scorePick(b, ctx), wr: getBrawlerWR(b, ctx) }))
+      .filter(b => b.score !== null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 15);
+    list.innerHTML = candidates.length
+      ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
+      : '<div class="no-picks">Not enough data</div>';
+  }
+
+  // Click to place
   list.querySelectorAll('.suggestion-card').forEach(card => {
     card.addEventListener('click', () => {
       const name = card.dataset.name;
-      if (draftAllies.length < 3 && !draftAllies.includes(name) && !draftEnemies.includes(name)) {
-        draftAllies.push(name);
-        renderDraft();
+      if (allTaken().has(name)) return;
+      if (isBan) {
+        if (draftAllyBans.length < 3) draftAllyBans.push(name);
+      } else {
+        if (draftAllies.length < 3) draftAllies.push(name);
       }
+      renderDraft();
     });
   });
 }
 
+function suggestionCard(c, i, isBan, isYours) {
+  const tier = TIERLIST[c.name] || '';
+  const pct  = (c.score * 100).toFixed(1);
+  const wr   = c.wr !== undefined ? c.wr : null;
+  const color = isBan ? 'var(--red)' : 'var(--amber)';
+  return `<div class="suggestion-card" data-name="${c.name}" style="cursor:${isYours?'pointer':'default'};${isBan?'border-left-color:var(--red)':''}">
+    <div class="sg-header">
+      <span class="sg-rank">${i+1}</span>
+      <span class="sg-name">${c.name}</span>
+      ${tier ? `<span class="bc-tier tier-${tier}">${tier}</span>` : ''}
+      <span class="sg-score" style="color:${color}">${pct}</span>
+    </div>
+    <div class="sg-bars">
+      ${wr !== null ? `<div class="sg-bar-row">
+        <span class="sg-bar-label">${isBan?'Threat WR':'Win Rate'}</span>
+        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(wr*100).toFixed(1)}%;background:${wrColor(wr)}"></div></div>
+        <span class="sg-bar-val" style="color:${wrColor(wr)}">${(wr*100).toFixed(1)}%</span>
+      </div>` : ''}
+      <div class="sg-bar-row">
+        <span class="sg-bar-label">Score</span>
+        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${Math.min(100,c.score*100*1.5).toFixed(1)}%;background:${color}"></div></div>
+        <span class="sg-bar-val" style="color:${color}">${pct}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TIER LIST
+// ═══════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════
 // TIER LIST
 // ═══════════════════════════════════════════════════════════════════════════
