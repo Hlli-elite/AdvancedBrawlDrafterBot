@@ -527,8 +527,8 @@ async function loadData() {
   try {
     document.querySelector('.load-text').textContent = 'Loading meta...';
     const [metaR, overallR] = await Promise.all([
-      fetch('data/meta.json'),
-      fetch('data/overall.json'),
+      fetch('meta.json'),
+      fetch('overall.json'),
     ]);
     if (!metaR.ok)    throw new Error(`meta.json: HTTP ${metaR.status}`);
     if (!overallR.ok) throw new Error(`overall.json: HTTP ${overallR.status}`);
@@ -571,7 +571,7 @@ function decodeContext(raw) {
 async function loadModeData(mode) {
   if (mode === 'all' || MODE_CACHE[mode]) return;
   try {
-    const r = await fetch(`data/mode_${mode}.json`);
+    const r = await fetch(`mode_${mode}.json`);
     if (!r.ok) return;
     const raw = await r.json();
     const decoded = {};
