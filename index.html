@@ -453,6 +453,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
           <span class="mu-min-label">Min games:</span>
           <input class="mu-search" id="mu-min" type="number" value="10" min="1" style="width:70px">
           <button class="tier-btn" id="mu-apply">Apply</button>
+          <button class="tier-btn primary" id="mu-export-csv" style="margin-left:8px">Export CSV</button>
           <span style="margin-left:auto;font-family:var(--mono);font-size:.7rem;color:var(--text3)">
             Row brawler's WR when facing column brawler
           </span>
@@ -1098,6 +1099,7 @@ function setupDragOnCells(container, tier) {
 function initMatchup() {
   renderMatchup();
   document.getElementById('mu-apply').addEventListener('click', renderMatchup);
+  document.getElementById('mu-export-csv').addEventListener('click', exportMatchupCSV);
   document.getElementById('mu-search').addEventListener('keydown', e => {
     if (e.key === 'Enter') renderMatchup();
   });
@@ -1238,6 +1240,49 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     if (target) target.classList.add('active');
   });
 });
+
+// ── MATCHUP CSV EXPORT ───────────────────────────────────────────────────────
+function exportMatchupCSV() {
+  const ctx    = getMuCtxKey();
+  const ms     = getMatchupStats(ctx);
+  const minG   = parseInt(document.getElementById('mu-min').value) || 10;
+  const search = document.getElementById('mu-search').value.toUpperCase().trim();
+
+  const allB = new Set();
+  Object.keys(ms).forEach(a => { allB.add(a); Object.keys(ms[a]).forEach(b => allB.add(b)); });
+  const cols = [...allB].sort();
+  let rows = [...allB].sort();
+  if (search) rows = rows.filter(b => b.includes(search));
+
+  if (!rows.length) { alert('No data to export.'); return; }
+
+  // Header row: blank cell then all column names
+  const lines = [];
+  lines.push(['brawler \\ vs', ...cols].join(','));
+
+  // Data rows
+  rows.forEach(row => {
+    const cells = [row];
+    cols.forEach(col => {
+      if (row === col) { cells.push(''); return; }
+      const rec = ms[row] && ms[row][col] ? ms[row][col] : null;
+      const tot = rec ? rec.wins + rec.losses : 0;
+      if (!rec || tot < minG) { cells.push(''); return; }
+      const wr = (rec.wins / tot * 100).toFixed(1);
+      cells.push(wr + '%');
+    });
+    lines.push(cells.join(','));
+  });
+
+  const csv = lines.join('\n');
+  const [mode, map] = ctx.split('|');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `matchup_${mode}_${map}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 // Render enemy slots once DOM is ready (they're in the draft panel)
