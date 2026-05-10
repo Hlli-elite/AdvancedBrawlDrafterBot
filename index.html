@@ -816,13 +816,21 @@ function fmtMode(m) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /*
-  Draft order in Brawl Stars ranked:
-  Ban phase (alternating, enemy bans first if you are first pick):
-    If first pick:  enemy ban → your ban → enemy ban → your ban → enemy ban → your ban
-    If second pick: your ban  → enemy ban → your ban  → enemy ban → your ban  → enemy ban
-  Pick phase (snake draft):
-    First pick:  pick 1, pick 4, pick 5
-    Second pick: pick 2, pick 3, pick 6
+  Brawl Stars ranked draft:
+
+  BAN PHASE — bans are blind/simultaneous (you never see enemy bans in real time).
+  The tool treats bans as: record YOUR bans, then record what ENEMY banned after.
+  Suggestion logic:
+    - If enemy has FIRST PICK: ban the highest win-rate brawlers on this map
+      (remove their strongest options before they pick)
+    - If enemy has LAST PICK (you first): ban brawlers that counter the top picks
+      (protect your first pick from being countered)
+
+  PICK PHASE — snake draft:
+    First pick:  picks 1, 4, 5  (you pick first and get 2 of last 3)
+    Second pick: picks 2, 3, 6  (enemy picks first, you get last pick advantage)
+
+  Enemy picks/bans are recorded manually by the user after seeing them in game.
 */
 
 let draftAllies   = [];   // picked ally brawlers
@@ -834,13 +842,13 @@ let gridSearch    = '';
 
 // Draft sequence definition
 // Each step: {phase:'ban'|'pick', team:'ally'|'enemy', slot: index within that team}
+// Bans are treated as: YOUR 3 bans first (all at once), then record ENEMY 3 bans.
+// This reflects reality — bans are blind, you commit yours then see theirs.
 function getDraftSequence(side) {
-  // side: 'first' or 'second'
-  // Ban order: second-pick team bans first in each pair
-  const banOrder = side === 'first'
-    ? ['enemy','ally','enemy','ally','enemy','ally']
-    : ['ally','enemy','ally','enemy','ally','enemy'];
+  // Ban order: you ban all 3 first, then record 3 enemy bans
+  const banOrder = ['ally','ally','ally','enemy','enemy','enemy'];
 
+  // Pick order snake draft
   const pickOrder = side === 'first'
     ? ['ally','enemy','enemy','ally','ally','enemy']
     : ['enemy','ally','ally','enemy','enemy','ally'];
@@ -922,8 +930,11 @@ function renderDraftOrderBar() {
     const teamLabel = s.team === 'ally' ? 'YOU' : 'ENEMY';
     const teamColor = s.team === 'ally' ? 'var(--blue)' : 'var(--red)';
 
+    const phaseLabel = isBan
+      ? (s.team === 'ally' ? `BAN ${s.slot+1}` : `REC BAN`)
+      : (s.team === 'ally' ? `PICK ${s.slot+1}` : `REC PICK`);
     return `<div class="order-slot ${isBan ? 'ban-slot' : ''} ${isCur ? 'current' : ''} ${isDone ? 'done' : ''}">
-      <span class="os-label" style="color:${isBan ? 'var(--red)' : 'var(--text3)'}">${isBan ? 'BAN' : 'PICK'} ${s.slot+1}</span>
+      <span class="os-label" style="color:${isBan ? 'var(--red)' : 'var(--text3)'}">${phaseLabel}</span>
       <span class="os-team" style="color:${teamColor}">${teamLabel}</span>
       <span class="os-brawler">${brawler || (isCur ? '▶' : '—')}</span>
     </div>`;
@@ -1101,32 +1112,52 @@ function wrColor(wr) {
 }
 
 // ── SCORING ───────────────────────────────────────────────────────────────────
-function scoreBan(name, ctx) {
-  // Ban score: how threatening is this brawler?
-  // High WR + high tier + counters our likely picks = should be banned
+function scoreBan(name, ctx, forEnemy) {
+  // forEnemy = true  → score how much WE should ban this (threat to us)
+  // forEnemy = false → score how much enemy should ban this (threat to them)
   const bs  = getBrawlerStats(ctx);
   const ms  = getMatchupStats(ctx);
   const s   = bs[name];
   if (!s || s.picks < 5) return null;
 
   const wr = s.wins / (s.wins + s.losses);
+  const side = document.getElementById('draft-side').value;
 
-  // How badly does this brawler beat our current picks?
-  let threatScore = 0.5;
-  if (draftAllies.length > 0) {
-    const threats = draftAllies.map(ally => {
-      const rec = ms[name] && ms[name][ally];
-      if (!rec || rec.wins + rec.losses < 3) return 0.5;
-      return rec.wins / (rec.wins + rec.losses);
-    });
-    threatScore = threats.reduce((a, b) => a + b, 0) / threats.length;
-  }
-
-  // Tier bonus — high tier brawlers are more ban-worthy
+  // Tier value
   const tier = TIERLIST[name];
-  const tierVal = {S:1, A:0.85, B:0.7, C:0.55, D:0.4, F:0.25}[tier] || 0.5;
+  const tierVal = {S:1.0, A:0.85, B:0.70, C:0.55, D:0.40, F:0.25}[tier] || 0.50;
 
-  return 0.35 * wr + 0.40 * threatScore + 0.25 * tierVal;
+  if (forEnemy) {
+    // We are banning — what should we remove from the pool?
+    if (side === 'second') {
+      // Enemy has first pick → ban the strongest brawlers on this map
+      // (remove their best options before they can pick them)
+      return 0.50 * wr + 0.30 * tierVal + 0.20 * (s.picks / Math.max(...Object.values(bs).map(x=>x.picks)));
+    } else {
+      // We have first pick, enemy has last pick → ban brawlers that counter
+      // the top meta picks (protect our likely picks from being countered)
+      // Find top 5 meta brawlers and ban things that beat them
+      const topMeta = Object.entries(bs)
+        .filter(([,v]) => v.picks >= 5)
+        .sort((a,b) => (b[1].wins/b[1].picks) - (a[1].wins/a[1].picks))
+        .slice(0,5).map(([n]) => n);
+
+      let counterScore = 0.5;
+      if (topMeta.length > 0) {
+        const scores = topMeta.map(meta => {
+          const rec = ms[name] && ms[name][meta];
+          if (!rec || rec.wins + rec.losses < 3) return 0.5;
+          return rec.wins / (rec.wins + rec.losses);
+        });
+        counterScore = scores.reduce((a,b)=>a+b,0) / scores.length;
+      }
+      return 0.35 * wr + 0.45 * counterScore + 0.20 * tierVal;
+    }
+  } else {
+    // Predicting enemy bans — they will ban our strongest options
+    // i.e. highest WR + tier on this map
+    return 0.55 * wr + 0.30 * tierVal + 0.15 * (s.picks / Math.max(...Object.values(bs).map(x=>x.picks)));
+  }
 }
 
 function scorePick(name, ctx) {
@@ -1197,38 +1228,77 @@ function renderSuggestions() {
   const step = seq[cur];
   const isBan  = step.phase === 'ban';
   const isYour = step.team === 'ally';
+  const side   = document.getElementById('draft-side').value;
 
   if (!isYour) {
-    // Enemy turn — show what we predict they'll pick/ban
-    title.textContent = isBan ? '🔮 Enemy Ban — Predicted Threats' : '🔮 Enemy Pick — Predicted';
-    const candidates = allBrawlers()
-      .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: isBan ? scoreBan(b, ctx) : scorePick(b, ctx) }))
-      .filter(b => b.score !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8);
-    list.innerHTML = candidates.length
-      ? candidates.map((c, i) => suggestionCard(c, i, isBan, false)).join('')
-      : '<div class="no-picks">Not enough data</div>';
+    // Recording enemy turn — show what we predict they picked/banned
+    // so user knows what to expect and can record it
+    if (isBan) {
+      // Predict which brawlers enemy will ban (our strongest options)
+      title.textContent = '🔮 Record Enemy Ban';
+      const hint = document.createElement('div');
+      const candidates = allBrawlers()
+        .filter(b => !taken.has(b))
+        .map(b => ({ name: b, score: scoreBan(b, ctx, false), wr: getBrawlerWR(b, ctx) }))
+        .filter(b => b.score !== null)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+      list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
+        Click to record what the enemy banned. Predicted targets shown below.
+      </div>` + (candidates.length
+        ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
+        : '<div class="no-picks">Not enough data</div>');
+    } else {
+      title.textContent = '🔮 Record Enemy Pick';
+      const candidates = allBrawlers()
+        .filter(b => !taken.has(b))
+        .map(b => ({ name: b, score: scorePick(b, ctx), wr: getBrawlerWR(b, ctx) }))
+        .filter(b => b.score !== null)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+      list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
+        Click to record what the enemy picked. Predicted picks shown below.
+      </div>` + (candidates.length
+        ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
+        : '<div class="no-picks">Not enough data</div>');
+    }
+    // clicking still records enemy action
+    list.querySelectorAll('.suggestion-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const name = card.dataset.name;
+        if (allTaken().has(name)) return;
+        if (isBan) { if (draftEnemyBans.length < 3) draftEnemyBans.push(name); }
+        else        { if (draftEnemies.length   < 3) draftEnemies.push(name);   }
+        renderDraft();
+      });
+    });
     return;
   }
 
   // Your turn
   if (isBan) {
-    title.textContent = '🚫 Your Ban — Recommended';
-    // Score enemy brawlers by how threatening they are to you
+    const banNum = draftAllyBans.length + 1;
+    const sideLabel = side === 'second'
+      ? 'Enemy has first pick — ban their strongest brawlers'
+      : 'You have first pick — ban counters to top picks';
+    title.textContent = `🚫 Your Ban ${banNum}/3`;
     const candidates = allBrawlers()
       .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: scoreBan(b, ctx) }))
+      .map(b => ({ name: b, score: scoreBan(b, ctx, true), wr: getBrawlerWR(b, ctx) }))
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
-    list.innerHTML = candidates.length
-      ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
-      : '<div class="no-picks">Not enough data</div>';
+    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${sideLabel}</div>` +
+      (candidates.length
+        ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
+        : '<div class="no-picks">Not enough data</div>');
   } else {
-    const pickNum = draftAllies.length + 1;
     const pickLabel = ['1st', '2nd', '3rd'][draftAllies.length] || '';
+    const pickNote  = side === 'first' && draftAllies.length === 0
+      ? 'First pick — choose a strong safe brawler'
+      : side === 'second' && draftAllies.length === 2
+      ? 'Last pick — hard counter the enemy team'
+      : 'Pick the best available counter';
     title.textContent = `⚔ Your ${pickLabel} Pick`;
     const candidates = allBrawlers()
       .filter(b => !taken.has(b))
@@ -1236,9 +1306,10 @@ function renderSuggestions() {
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
       .slice(0, 15);
-    list.innerHTML = candidates.length
-      ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
-      : '<div class="no-picks">Not enough data</div>';
+    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div>` +
+      (candidates.length
+        ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
+        : '<div class="no-picks">Not enough data</div>');
   }
 
   // Click to place
