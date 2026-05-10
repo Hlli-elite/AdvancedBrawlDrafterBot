@@ -627,18 +627,34 @@ function getCtxKey(mode, map) {
 }
 
 function getCtxData(mode, map) {
-  if (mode === 'all') return OVERALL;
+  // 'all' mode always uses overall
+  if (!mode || mode === 'all') return OVERALL;
+
   const modeData = MODE_CACHE[mode];
+  // Mode not loaded yet — fall back to overall
   if (!modeData) return OVERALL;
-  const mapKey = (map && map !== 'all' && map !== '') ? map : 'all';
-  return modeData[mapKey] || modeData['all'] || OVERALL;
+
+  // Specific map requested and available
+  if (map && map !== '' && map !== 'all' && modeData[map]) {
+    return modeData[map];
+  }
+
+  // Mode-wide (all maps for this mode)
+  if (modeData['all']) return modeData['all'];
+
+  // Last resort
+  return OVERALL;
 }
 function getBrawlerStats(ctxKey) {
-  const [mode, map] = ctxKey.split('|');
+  const parts = ctxKey.split('|');
+  const mode = parts[0];
+  const map  = parts.slice(1).join('|');  // map names can contain spaces but not pipes
   return getCtxData(mode, map).bs || {};
 }
 function getMatchupStats(ctxKey) {
-  const [mode, map] = ctxKey.split('|');
+  const parts = ctxKey.split('|');
+  const mode = parts[0];
+  const map  = parts.slice(1).join('|');
   return getCtxData(mode, map).ms || {};
 }
 
@@ -660,13 +676,23 @@ function populateModeSelects() {
     });
   });
 
-  // Mode change → update map dropdown
+  // Mode change → load mode data, update map dropdown, re-render
   ['draft','mu','stats'].forEach(pfx => {
     const modeEl = document.getElementById(`${pfx}-mode`);
     const mapEl  = document.getElementById(`${pfx}-map`);
     if (!mapEl) return;
+
     modeEl.addEventListener('change', async () => {
       const [mode] = modeEl.value.split('|');
+
+      // Lazy-load mode file if not already cached
+      if (mode !== 'all') {
+        modeEl.disabled = true;
+        await loadModeData(mode);
+        modeEl.disabled = false;
+      }
+
+      // Populate map dropdown
       mapEl.innerHTML = '<option value="">All Maps</option>';
       const maps = (META.maps && META.maps[mode]) || [];
       maps.forEach(m => {
@@ -674,12 +700,16 @@ function populateModeSelects() {
         o.value = m; o.textContent = m;
         mapEl.appendChild(o);
       });
-      if (pfx === 'draft') renderSuggestions();
+
+      // Re-render with new context
+      if (pfx === 'draft') { renderBrawlerGrid(); renderSuggestions(); }
       if (pfx === 'mu') renderMatchup();
       if (pfx === 'stats') renderStats();
     });
+
+    // Map change → re-render with selected map
     mapEl.addEventListener('change', () => {
-      if (pfx === 'draft') renderSuggestions();
+      if (pfx === 'draft') { renderBrawlerGrid(); renderSuggestions(); }
       if (pfx === 'mu') renderMatchup();
       if (pfx === 'stats') renderStats();
     });
@@ -691,11 +721,16 @@ function getDraftCtxKey() {
   const map  = document.getElementById('draft-map').value;
   return getCtxKey(mode, map);
 }
+function getDraftMode() { return document.getElementById('draft-mode').value.split('|')[0]; }
+function getDraftMap()  { return document.getElementById('draft-map').value || ''; }
+
 function getMuCtxKey() {
   const mode = document.getElementById('mu-mode').value.split('|')[0];
   const map  = document.getElementById('mu-map').value;
   return getCtxKey(mode, map);
 }
+function getMuMode() { return document.getElementById('mu-mode').value.split('|')[0]; }
+function getMuMap()  { return document.getElementById('mu-map').value || ''; }
 function getStatsCtxKey() {
   const mode = document.getElementById('stats-mode').value.split('|')[0];
   const map  = document.getElementById('stats-map').value;
