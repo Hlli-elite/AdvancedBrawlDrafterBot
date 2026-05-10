@@ -509,24 +509,86 @@ let gridFilter   = 'all';
 let gridSearch   = '';
 
 // ── DATA LOADING ──────────────────────────────────────────────────────────────
+// Data is split across multiple files for fast loading:
+//   data/meta.json    — brawler list, modes, maps index
+//   data/overall.json — all-mode all-map stats
+//   data/mode_X.json  — per-mode stats (lazy loaded when mode selected)
+//
+// Stats are encoded as arrays with brawler integer IDs to save space.
+// meta.brawlers[id] = brawler name
+// bs[id] = [picks, wins]
+// ms[id][id] = [wins, losses]
+
+let META    = null;   // meta.json
+let OVERALL = null;   // overall.json decoded
+let MODE_CACHE = {};  // mode -> decoded data
+
 async function loadData() {
   try {
-    const r = await fetch('data.json');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    DATA = await r.json();
+    document.querySelector('.load-text').textContent = 'Loading meta...';
+    const [metaR, overallR] = await Promise.all([
+      fetch('data/meta.json'),
+      fetch('data/overall.json'),
+    ]);
+    if (!metaR.ok)    throw new Error(`meta.json: HTTP ${metaR.status}`);
+    if (!overallR.ok) throw new Error(`overall.json: HTTP ${overallR.status}`);
+    META    = await metaR.json();
+    const raw = await overallR.json();
+    OVERALL = decodeContext(raw);
     onDataLoaded();
   } catch(e) {
-    document.querySelector('.load-text').textContent = 
-      `Failed to load data.json — ${e.message}. Make sure the file exists alongside index.html.`;
+    document.querySelector('.load-text').textContent =
+      `Failed to load — ${e.message}. Make sure the data/ folder exists alongside index.html.`;
     document.querySelector('.spinner').style.display = 'none';
+  }
+}
+
+// Decode a raw context {bs:{id:[picks,wins]}, ms:{id:{id:[wins,losses]}}}
+// into {bs:{name:{picks,wins,losses}}, ms:{name:{name:{wins,losses}}}}
+function decodeContext(raw) {
+  if (!raw || !META) return {bs:{}, ms:{}};
+  const names = META.brawlers;
+  const bs = {};
+  for (const [id, arr] of Object.entries(raw.bs || {})) {
+    const name = names[id];
+    if (!name) continue;
+    bs[name] = {picks: arr[0], wins: arr[1], losses: arr[0] - arr[1]};
+  }
+  const ms = {};
+  for (const [aid, vs] of Object.entries(raw.ms || {})) {
+    const aname = names[aid];
+    if (!aname) continue;
+    ms[aname] = {};
+    for (const [bid, arr] of Object.entries(vs)) {
+      const bname = names[bid];
+      if (!bname) continue;
+      ms[aname][bname] = {wins: arr[0], losses: arr[1]};
+    }
+  }
+  return {bs, ms};
+}
+
+async function loadModeData(mode) {
+  if (mode === 'all' || MODE_CACHE[mode]) return;
+  try {
+    const r = await fetch(`data/mode_${mode}.json`);
+    if (!r.ok) return;
+    const raw = await r.json();
+    const decoded = {};
+    for (const [mapKey, ctx] of Object.entries(raw)) {
+      decoded[mapKey] = decodeContext(ctx);
+    }
+    MODE_CACHE[mode] = decoded;
+  } catch(e) {
+    console.warn(`Could not load mode_${mode}.json:`, e);
   }
 }
 
 function onDataLoaded() {
   // Update header meta
-  document.getElementById('meta-battles').innerHTML = `BATTLES <b>${DATA.meta.battles.toLocaleString()}</b>`;
-  document.getElementById('meta-players').innerHTML = `PLAYERS <b>${DATA.meta.players.toLocaleString()}</b>`;
-  const upd = new Date(DATA.meta.updated);
+  document.getElementById('meta-battles').innerHTML = `BATTLES <b>${META.battles.toLocaleString()}</b>`;
+  document.getElementById('meta-players').innerHTML = `PLAYERS <b>${META.players.toLocaleString()}</b>`;
+  const upd = new Date(META.updated);
   document.getElementById('meta-updated').innerHTML = `UPDATED <b>${upd.toLocaleDateString()} ${upd.toLocaleTimeString()}</b>`;
   const dot = document.getElementById('status-dot');
   dot.style.background = 'var(--green)';
@@ -553,20 +615,28 @@ function getCtxKey(mode, map) {
   return `${mode}|all`;
 }
 
+function getCtxData(mode, map) {
+  if (mode === 'all') return OVERALL;
+  const modeData = MODE_CACHE[mode];
+  if (!modeData) return OVERALL;
+  const mapKey = (map && map !== 'all' && map !== '') ? map : 'all';
+  return modeData[mapKey] || modeData['all'] || OVERALL;
+}
 function getBrawlerStats(ctxKey) {
-  return DATA.brawler_stats[ctxKey] || DATA.brawler_stats['all|all'] || {};
+  const [mode, map] = ctxKey.split('|');
+  return getCtxData(mode, map).bs || {};
 }
 function getMatchupStats(ctxKey) {
-  return DATA.matchup_stats[ctxKey] || DATA.matchup_stats['all|all'] || {};
+  const [mode, map] = ctxKey.split('|');
+  return getCtxData(mode, map).ms || {};
 }
 
 function allBrawlers() {
-  const overall = DATA.brawler_stats['all|all'] || {};
-  return Object.keys(overall).sort();
+  return META ? [...META.brawlers].sort() : [];
 }
 
 function populateModeSelects() {
-  const modes = DATA.modes || [];
+  const modes = META.modes || [];
   const selects = ['draft-mode','mu-mode','stats-mode'];
   selects.forEach(id => {
     const el = document.getElementById(id);
@@ -584,10 +654,10 @@ function populateModeSelects() {
     const modeEl = document.getElementById(`${pfx}-mode`);
     const mapEl  = document.getElementById(`${pfx}-map`);
     if (!mapEl) return;
-    modeEl.addEventListener('change', () => {
+    modeEl.addEventListener('change', async () => {
       const [mode] = modeEl.value.split('|');
       mapEl.innerHTML = '<option value="">All Maps</option>';
-      const maps = (DATA.maps && DATA.maps[mode]) || [];
+      const maps = (META.maps && META.maps[mode]) || [];
       maps.forEach(m => {
         const o = document.createElement('option');
         o.value = m; o.textContent = m;
