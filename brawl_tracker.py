@@ -328,7 +328,7 @@ def export_data(brawler_stats, matchup_stats, seen_ids, processed_tags):
         total  = sum(v["picks"] for v in b_data.values())
 
         # Skip sparse per-map contexts
-        if map_ not in ("all", "unknown") and total < 300:
+        if map_ not in ("all", "unknown") and total < 50:
             return None
 
         # Brawler stats: {id: [picks, wins]}
@@ -350,7 +350,7 @@ def export_data(brawler_stats, matchup_stats, seen_ids, processed_tags):
                 if bi is None:
                     continue
                 dec = r["wins"] + r["losses"]
-                if dec < 15:
+                if dec < 5:
                     continue
                 inner[bi] = [r["wins"], r["losses"]]
             if inner:
