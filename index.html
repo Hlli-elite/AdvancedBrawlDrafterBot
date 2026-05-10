@@ -612,8 +612,11 @@ function onDataLoaded() {
   initStats();
 
   // Hide loading, show draft
-  document.getElementById('loading').classList.remove('active');
+  const loadingEl = document.getElementById('loading');
+  loadingEl.classList.remove('active');
+  loadingEl.style.display = 'none';
   document.getElementById('tab-draft').classList.add('active');
+  document.getElementById('tab-draft').style.display = 'flex';
 }
 
 // ── CONTEXT HELPERS ───────────────────────────────────────────────────────────
