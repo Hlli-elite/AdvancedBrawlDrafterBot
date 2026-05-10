@@ -534,10 +534,16 @@ async function loadData() {
     if (!metaR.ok)    throw new Error(`meta.json: HTTP ${metaR.status}`);
     if (!overallR.ok) throw new Error(`overall.json: HTTP ${overallR.status}`);
     META    = await metaR.json();
+    console.log('META loaded:', META.brawlers.length, 'brawlers,', META.modes.length, 'modes');
     const raw = await overallR.json();
+    console.log('overall.json raw keys:', Object.keys(raw));
     OVERALL = decodeContext(raw);
+    console.log('OVERALL decoded bs keys:', Object.keys(OVERALL.bs).length, 'brawlers');
+    console.log('Calling onDataLoaded...');
     onDataLoaded();
+    console.log('onDataLoaded complete');
   } catch(e) {
+    console.error('loadData error:', e);
     document.querySelector('.load-text').textContent =
       `Failed to load — ${e.message}. Make sure the data/ folder exists alongside index.html.`;
     document.querySelector('.spinner').style.display = 'none';
