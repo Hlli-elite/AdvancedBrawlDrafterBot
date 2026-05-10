@@ -305,8 +305,6 @@ def export_data(brawler_stats, matchup_stats, seen_ids, processed_tags):
       - No pre-computed rates (client does the division)
       - Team comp data omitted (not used by website yet)
     """
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     # Build brawler ID table
     all_names = set()
     for brawlers in brawler_stats.values():
