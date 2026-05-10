@@ -2,7 +2,7 @@ name: Collect Brawl Stars Data
 
 on:
   schedule:
-    - cron: '0 * * * *'   # every hour at :00
+    - cron: '*/30 * * * *'  # every 30 minutes
   workflow_dispatch:       # also lets you trigger it manually from GitHub UI
 
 jobs:
