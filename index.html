@@ -1111,103 +1111,271 @@ function wrColor(wr) {
   return 'var(--red)';
 }
 
-// ── SCORING ───────────────────────────────────────────────────────────────────
+// ── SCORING ENGINE ───────────────────────────────────────────────────────────
+//
+// scorePick(name, ctx) → float [0,1]
+//   Evaluates a candidate pick using:
+//   1. Raw win rate on this map/mode
+//   2. Counter score vs confirmed enemy picks
+//   3. Lookahead: simulate likely enemy future picks, penalise candidates
+//      that get hard-countered by predictable responses
+//   4. Composition safety: does this pick cover weaknesses or create new ones?
+//   5. Tier bias from human input
+//
+// scoreBan(name, ctx, forEnemy) → float [0,1]
+//   forEnemy=true  → what WE should ban (remove from enemy options)
+//   forEnemy=false → what ENEMY will likely ban (predict to prep)
+//
+// All functions are pure — they read global state (draftAllies, draftEnemies,
+// TIERLIST, side) but do not modify it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LOOKAHEAD_DEPTH   = 3;   // how many future enemy picks to simulate
+const LOOKAHEAD_WEIGHT  = 0.35; // how much future risk affects the score
+const MIN_PICKS_FOR_DATA = 5;  // ignore brawlers with fewer picks
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function getBSEntry(name, bs) {
+  const s = bs[name];
+  if (!s || s.picks < MIN_PICKS_FOR_DATA) return null;
+  return s;
+}
+
+function rawWR(name, bs) {
+  const s = getBSEntry(name, bs);
+  if (!s) return 0.5;
+  return s.wins / (s.wins + s.losses);
+}
+
+function matchupWR(attacker, defender, ms) {
+  // attacker's WR when facing defender
+  const rec = ms[attacker] && ms[attacker][defender];
+  if (!rec || rec.wins + rec.losses < 3) return null;
+  return rec.wins / (rec.wins + rec.losses);
+}
+
+function tierScore(name) {
+  const t = TIERLIST[name];
+  return {S:1.0, A:0.85, B:0.70, C:0.55, D:0.40, F:0.25}[t] || 0.55;
+}
+
+function maxPicksInCtx(bs) {
+  return Math.max(1, ...Object.values(bs).map(s => s.picks));
+}
+
+// Counter score: how well does [candidate] do against a list of [targets]?
+// Returns 0–1. Uses matchup data when available, falls back to raw WR diff.
+function counterScoreVs(candidate, targets, bs, ms) {
+  if (targets.length === 0) return 0.5;
+  const scores = targets.map(t => {
+    const mu = matchupWR(candidate, t, ms);
+    if (mu !== null) return mu;
+    // No direct matchup data — approximate via WR difference
+    const cwr = rawWR(candidate, bs);
+    const twr = rawWR(t, bs);
+    return 0.5 + (cwr - twr) * 0.4;
+  });
+  return scores.reduce((a, b) => a + b, 0) / scores.length;
+}
+
+// Vulnerability score: how badly is [candidate] countered by [aggressors]?
+// Returns 0 (terrible) to 1 (safe). Inverse of counterScoreVs.
+function safetyScoreVs(candidate, aggressors, bs, ms) {
+  if (aggressors.length === 0) return 0.5;
+  const scores = aggressors.map(a => {
+    const mu = matchupWR(a, candidate, ms); // aggressor's WR vs candidate
+    if (mu !== null) return 1 - mu;         // candidate's survival rate
+    return 0.5;
+  });
+  return scores.reduce((a, b) => a + b, 0) / scores.length;
+}
+
+// Predict N most likely enemy picks from the remaining pool
+function predictEnemyPicks(n, taken, bs, ms, enemyPicked) {
+  const pool = allBrawlers().filter(b => !taken.has(b));
+  return pool
+    .map(b => {
+      const s = getBSEntry(b, bs);
+      if (!s) return null;
+      const wr  = rawWR(b, bs);
+      const tier = tierScore(b);
+      // Enemy picks what is strong on this map + counters our current picks
+      const ctr = counterScoreVs(b, draftAllies, bs, ms);
+      return { name: b, score: 0.40 * wr + 0.35 * ctr + 0.25 * tier };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, n)
+    .map(x => x.name);
+}
+
+// ── Main pick scorer ──────────────────────────────────────────────────────────
+function scorePick(name, ctx) {
+  const bs   = getBrawlerStats(ctx);
+  const ms   = getMatchupStats(ctx);
+  const s    = getBSEntry(name, bs);
+  if (!s) return null;
+
+  const side     = document.getElementById('draft-side').value;
+  const pickSlot = draftAllies.length; // 0, 1, 2
+  const isLast   = (side === 'first'  && pickSlot === 2) ||
+                   (side === 'second' && pickSlot === 2);
+  const taken    = allTaken();
+
+  // 1. Raw win rate
+  const wr = rawWR(name, bs);
+
+  // 2. Counter score vs confirmed enemy picks
+  const counterNow = counterScoreVs(name, draftEnemies, bs, ms);
+
+  // 3. Safety vs confirmed enemy picks (how safe is our pick against what they have?)
+  const safetyNow = safetyScoreVs(name, draftEnemies, bs, ms);
+
+  // 4. Lookahead — simulate likely enemy future picks
+  //    How many more picks does the enemy have after this?
+  const enemyPicksDone   = draftEnemies.length;
+  const enemyPicksLeft   = 3 - enemyPicksDone;
+  let lookaheadPenalty   = 0;
+
+  if (!isLast && enemyPicksLeft > 0) {
+    // Temporarily mark our candidate as taken for the simulation
+    const simTaken = new Set([...taken, name]);
+    const likelyEnemyPicks = predictEnemyPicks(
+      Math.min(LOOKAHEAD_DEPTH, enemyPicksLeft),
+      simTaken, bs, ms, draftEnemies
+    );
+
+    // For each likely enemy response, how badly does it counter our candidate?
+    const futureThreats = likelyEnemyPicks.map(ep => {
+      const mu = matchupWR(ep, name, ms); // enemy's WR vs our candidate
+      return mu !== null ? mu : 0.5;
+    });
+
+    // Worst-case threat (the enemy pick that hurts us most)
+    const worstThreat = futureThreats.length > 0
+      ? Math.max(...futureThreats)
+      : 0.5;
+
+    // Average threat
+    const avgThreat = futureThreats.length > 0
+      ? futureThreats.reduce((a, b) => a + b, 0) / futureThreats.length
+      : 0.5;
+
+    // Penalty is a blend of worst-case and average — don't pick something
+    // that gets completely destroyed by a predictable counter
+    lookaheadPenalty = 0.6 * worstThreat + 0.4 * avgThreat - 0.5;
+    // Penalty is 0 if no threat, negative if we're safe (bonus)
+  }
+
+  // 5. Tier bias
+  const tier = tierScore(name);
+
+  // 6. Pick order weights — early picks need high floor, late picks need counters
+  let wWR, wCounter, wSafety, wTier;
+  if (isLast) {
+    // Last pick: maximise counter, ignore lookahead (enemy is locked)
+    wWR      = 0.20;
+    wCounter = 0.55;
+    wSafety  = 0.15;
+    wTier    = 0.10;
+  } else if (pickSlot === 0) {
+    // First pick: play safe, prioritise raw strength
+    wWR      = 0.45;
+    wCounter = 0.20;
+    wSafety  = 0.20;
+    wTier    = 0.15;
+  } else {
+    // Middle pick: balance
+    wWR      = 0.30;
+    wCounter = 0.35;
+    wSafety  = 0.20;
+    wTier    = 0.15;
+  }
+
+  const baseScore = wWR * wr + wCounter * counterNow + wSafety * safetyNow + wTier * tier;
+  const finalScore = baseScore - LOOKAHEAD_WEIGHT * Math.max(0, lookaheadPenalty);
+
+  return Math.max(0, Math.min(1, finalScore));
+}
+
+// ── Ban scorer ────────────────────────────────────────────────────────────────
 function scoreBan(name, ctx, forEnemy) {
-  // forEnemy = true  → score how much WE should ban this (threat to us)
-  // forEnemy = false → score how much enemy should ban this (threat to them)
   const bs  = getBrawlerStats(ctx);
   const ms  = getMatchupStats(ctx);
-  const s   = bs[name];
-  if (!s || s.picks < 5) return null;
+  const s   = getBSEntry(name, bs);
+  if (!s) return null;
 
-  const wr = s.wins / (s.wins + s.losses);
-  const side = document.getElementById('draft-side').value;
-
-  // Tier value
-  const tier = TIERLIST[name];
-  const tierVal = {S:1.0, A:0.85, B:0.70, C:0.55, D:0.40, F:0.25}[tier] || 0.50;
+  const side  = document.getElementById('draft-side').value;
+  const wr    = rawWR(name, bs);
+  const tier  = tierScore(name);
+  const taken = allTaken();
+  const maxP  = maxPicksInCtx(bs);
 
   if (forEnemy) {
-    // We are banning — what should we remove from the pool?
-    if (side === 'second') {
-      // Enemy has first pick → ban the strongest brawlers on this map
-      // (remove their best options before they can pick them)
-      return 0.50 * wr + 0.30 * tierVal + 0.20 * (s.picks / Math.max(...Object.values(bs).map(x=>x.picks)));
-    } else {
-      // We have first pick, enemy has last pick → ban brawlers that counter
-      // the top meta picks (protect our likely picks from being countered)
-      // Find top 5 meta brawlers and ban things that beat them
-      const topMeta = Object.entries(bs)
-        .filter(([,v]) => v.picks >= 5)
-        .sort((a,b) => (b[1].wins/b[1].picks) - (a[1].wins/a[1].picks))
-        .slice(0,5).map(([n]) => n);
+    // We are deciding what to ban — remove from the enemy pool.
+    //
+    // Key question: "If we DON'T ban this brawler, and the enemy picks it,
+    // how much does it hurt us?"
+    //
+    // = enemy's pick value × probability they'd actually pick it
 
-      let counterScore = 0.5;
-      if (topMeta.length > 0) {
-        const scores = topMeta.map(meta => {
-          const rec = ms[name] && ms[name][meta];
-          if (!rec || rec.wins + rec.losses < 3) return 0.5;
-          return rec.wins / (rec.wins + rec.losses);
-        });
-        counterScore = scores.reduce((a,b)=>a+b,0) / scores.length;
-      }
-      return 0.35 * wr + 0.45 * counterScore + 0.20 * tierVal;
+    // How much does this brawler threaten our current + likely future picks?
+    const allAllies = [...draftAllies];
+    // Also consider what we are likely to pick (top meta picks we haven't chosen yet)
+    const likelyOurPicks = allBrawlers()
+      .filter(b => !taken.has(b) && !allAllies.includes(b))
+      .map(b => ({ name: b, wr: rawWR(b, bs) }))
+      .sort((a, b) => b.wr - a.wr)
+      .slice(0, 3)
+      .map(x => x.name);
+    const projectedAllies = [...allAllies, ...likelyOurPicks];
+
+    const threatVsUs = counterScoreVs(name, projectedAllies, bs, ms);
+
+    if (side === 'second') {
+      // Enemy has first pick → ban their strongest options
+      // (priority: high WR + high tier + threatens our comp)
+      return 0.35 * wr + 0.25 * tier + 0.40 * threatVsUs;
+    } else {
+      // We have first pick → ban brawlers that would counter our likely picks
+      // Find top meta picks to protect
+      const topMeta = allBrawlers()
+        .filter(b => !taken.has(b))
+        .map(b => ({ name: b, wr: rawWR(b, bs) }))
+        .sort((a, b) => b.wr - a.wr)
+        .slice(0, 5)
+        .map(x => x.name);
+
+      // How well does [name] counter the meta?
+      const countersTopMeta = counterScoreVs(name, topMeta, bs, ms);
+      return 0.25 * wr + 0.20 * tier + 0.55 * countersTopMeta;
     }
   } else {
-    // Predicting enemy bans — they will ban our strongest options
-    // i.e. highest WR + tier on this map
-    return 0.55 * wr + 0.30 * tierVal + 0.15 * (s.picks / Math.max(...Object.values(bs).map(x=>x.picks)));
+    // Predicting enemy bans — they'll remove our strongest options
+    const ourStrength = wr * 0.55 + tier * 0.30 + (s.picks / maxP) * 0.15;
+    return ourStrength;
   }
 }
 
-function scorePick(name, ctx) {
+// ── Score breakdown for display ───────────────────────────────────────────────
+function getPickBreakdown(name, ctx) {
   const bs  = getBrawlerStats(ctx);
   const ms  = getMatchupStats(ctx);
-  const s   = bs[name];
-  if (!s || s.picks < 5) return null;
+  const wr  = rawWR(name, bs);
+  const ctr = counterScoreVs(name, draftEnemies, bs, ms);
+  const saf = safetyScoreVs(name, draftEnemies, bs, ms);
 
-  const wr = s.wins / (s.wins + s.losses);
+  // Lookahead — biggest threat
+  const taken = allTaken();
+  const simTaken = new Set([...taken, name]);
+  const likelyEnemy = predictEnemyPicks(3, simTaken, bs, ms, draftEnemies);
+  const worstCounter = likelyEnemy.map(ep => {
+    const mu = matchupWR(ep, name, ms);
+    return mu !== null ? { brawler: ep, wr: mu } : null;
+  }).filter(Boolean).sort((a,b) => b.wr - a.wr)[0];
 
-  // Counter score vs each enemy pick
-  let counterScore = 0.5;
-  if (draftEnemies.length > 0) {
-    const wrs = draftEnemies.map(enemy => {
-      const rec = ms[name] && ms[name][enemy];
-      if (!rec || rec.wins + rec.losses < 3) return 0.5;
-      return rec.wins / (rec.wins + rec.losses);
-    });
-    counterScore = wrs.reduce((a, b) => a + b, 0) / wrs.length;
-  }
-
-  // Synergy score with already-picked allies
-  let synergyScore = 0.5;
-  if (draftAllies.length > 0) {
-    // Proxy: if ally also has high WR, they probably work well together
-    // True synergy needs team comp data — use pairwise matchup as approximation
-    const syn = draftAllies.map(ally => {
-      const allyS = bs[ally];
-      if (!allyS) return 0.5;
-      return allyS.wins / (allyS.wins + allyS.losses);
-    });
-    synergyScore = syn.reduce((a, b) => a + b, 0) / syn.length;
-    synergyScore = 0.5 + (synergyScore - 0.5) * 0.5; // dampen
-  }
-
-  // Pick order awareness
-  const side = document.getElementById('draft-side').value;
-  const pickSlot = draftAllies.length; // 0, 1, 2
-  // Early picks: prioritise safe high-WR brawlers (less counter weight)
-  // Late picks: prioritise hard counters (more counter weight)
-  const counterWeight = side === 'first'
-    ? [0.30, 0.40, 0.50][pickSlot] || 0.40
-    : [0.35, 0.45, 0.55][pickSlot] || 0.45;
-  const wrWeight      = 0.90 - counterWeight - 0.10;
-
-  // Tier bonus
-  const tier = TIERLIST[name];
-  const tierBonus = {S:0.08, A:0.05, B:0.02, C:0, D:-0.02, F:-0.05}[tier] || 0;
-
-  return wrWeight * wr + counterWeight * counterScore + 0.10 * (synergyScore + tierBonus);
+  return { wr, ctr, saf, worstCounter };
 }
 
 function renderSuggestions() {
@@ -1328,11 +1496,35 @@ function renderSuggestions() {
 }
 
 function suggestionCard(c, i, isBan, isYours) {
-  const tier = TIERLIST[c.name] || '';
-  const pct  = (c.score * 100).toFixed(1);
-  const wr   = c.wr !== undefined ? c.wr : null;
+  const tier  = TIERLIST[c.name] || '';
+  const pct   = (c.score * 100).toFixed(1);
   const color = isBan ? 'var(--red)' : 'var(--amber)';
-  return `<div class="suggestion-card" data-name="${c.name}" style="cursor:${isYours?'pointer':'default'};${isBan?'border-left-color:var(--red)':''}">
+  const ctx   = getDraftCtxKey();
+  const bs    = getBrawlerStats(ctx);
+  const ms    = getMatchupStats(ctx);
+  const wr    = rawWR(c.name, bs);
+  const ctr   = !isBan ? counterScoreVs(c.name, draftEnemies, bs, ms) : null;
+  const saf   = !isBan ? safetyScoreVs(c.name, draftEnemies, bs, ms) : null;
+
+  // Lookahead: worst likely counter for pick cards
+  let worstNote = '';
+  if (!isBan && draftEnemies.length < 3) {
+    const taken = allTaken();
+    const simTaken = new Set([...taken, c.name]);
+    const likely = predictEnemyPicks(3, simTaken, bs, ms, draftEnemies);
+    const worst = likely.map(ep => {
+      const mu = matchupWR(ep, c.name, ms);
+      return mu !== null ? {b: ep, mu} : null;
+    }).filter(Boolean).sort((a,b) => b.mu - a.mu)[0];
+    if (worst && worst.mu > 0.55) {
+      worstNote = `<div style="margin-top:5px;font-family:var(--mono);font-size:.62rem;color:var(--red);opacity:.8">
+        ⚠ Countered by likely ${worst.b} (${(worst.mu*100).toFixed(0)}%)
+      </div>`;
+    }
+  }
+
+  return `<div class="suggestion-card" data-name="${c.name}"
+    style="cursor:${isYours?'pointer':'default'};${isBan?'border-left-color:var(--red)':''}">
     <div class="sg-header">
       <span class="sg-rank">${i+1}</span>
       <span class="sg-name">${c.name}</span>
@@ -1340,17 +1532,28 @@ function suggestionCard(c, i, isBan, isYours) {
       <span class="sg-score" style="color:${color}">${pct}</span>
     </div>
     <div class="sg-bars">
-      ${wr !== null ? `<div class="sg-bar-row">
-        <span class="sg-bar-label">${isBan?'Threat WR':'Win Rate'}</span>
+      <div class="sg-bar-row">
+        <span class="sg-bar-label">Win Rate</span>
         <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(wr*100).toFixed(1)}%;background:${wrColor(wr)}"></div></div>
         <span class="sg-bar-val" style="color:${wrColor(wr)}">${(wr*100).toFixed(1)}%</span>
+      </div>
+      ${ctr !== null ? `<div class="sg-bar-row">
+        <span class="sg-bar-label">vs Enemy</span>
+        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(ctr*100).toFixed(1)}%;background:${wrColor(ctr)}"></div></div>
+        <span class="sg-bar-val" style="color:${wrColor(ctr)}">${(ctr*100).toFixed(1)}%</span>
+      </div>` : ''}
+      ${saf !== null ? `<div class="sg-bar-row">
+        <span class="sg-bar-label">Safety</span>
+        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(saf*100).toFixed(1)}%;background:${wrColor(saf)}"></div></div>
+        <span class="sg-bar-val" style="color:${wrColor(saf)}">${(saf*100).toFixed(1)}%</span>
       </div>` : ''}
       <div class="sg-bar-row">
         <span class="sg-bar-label">Score</span>
-        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${Math.min(100,c.score*100*1.5).toFixed(1)}%;background:${color}"></div></div>
+        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${Math.min(100,c.score*140).toFixed(1)}%;background:${color}"></div></div>
         <span class="sg-bar-val" style="color:${color}">${pct}</span>
       </div>
     </div>
+    ${worstNote}
   </div>`;
 }
 
