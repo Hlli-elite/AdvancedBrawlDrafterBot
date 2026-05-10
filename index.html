@@ -562,7 +562,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
     <!-- OVERRIDES TAB -->
     <div id="tab-overrides" class="tab-content">
       <div class="ctx-bar">
-        <span class="ctx-label">Edit overrides here, then click <b style="color:var(--amber)">Export JSON</b> → upload <code>overrides.json</code> to your GitHub repo to save permanently.</span>
+        <span class="ctx-label">Overrides are saved in your browser. Export to back them up.</span>
         <div style="margin-left:auto;display:flex;gap:8px">
           <button class="tier-btn" id="ov-import-btn">Import JSON</button>
           <input type="file" id="ov-import-file" accept=".json" class="hidden">
@@ -722,7 +722,7 @@ async function loadModeData(mode) {
   }
 }
 
-async function onDataLoaded() {
+function onDataLoaded() {
   // Update header meta
   document.getElementById('meta-battles').innerHTML = `BATTLES <b>${META.battles.toLocaleString()}</b>`;
   document.getElementById('meta-players').innerHTML = `PLAYERS <b>${META.players.toLocaleString()}</b>`;
@@ -739,7 +739,7 @@ async function onDataLoaded() {
   populateModeSelects();
   initDraft();
   initTierList();
-  await initOverrides();
+  initOverrides();
   initMatchup();
   initStats();
 
@@ -2018,34 +2018,20 @@ let OVERRIDES = {
   notes: ''
 };
 
-async function loadOverrides() {
-  try {
-    const r = await fetch('overrides.json');
-    if (r.ok) {
-      const raw = await r.json();
-      // Strip __comment and __example keys (they're just documentation)
-      OVERRIDES.adjustments = stripComments(raw.adjustments || {});
-      OVERRIDES.banPriority  = stripComments(raw.banPriority  || {});
-      OVERRIDES.matchups     = stripComments(raw.matchups     || {});
-      OVERRIDES.notes        = raw.notes || '';
-      console.log('overrides.json loaded');
-    }
-  } catch(e) {
-    console.warn('Could not load overrides.json:', e);
+function loadOverrides() {
+  const saved = localStorage.getItem('brawldraft-overrides');
+  if (saved) {
+    try { OVERRIDES = JSON.parse(saved); }
+    catch(e) { console.warn('Failed to load overrides:', e); }
   }
-}
-
-function stripComments(obj) {
-  // Remove keys starting with __ (documentation keys in the JSON template)
-  return Object.fromEntries(
-    Object.entries(obj).filter(([k]) => !k.startsWith('__'))
-  );
+  OVERRIDES.adjustments = OVERRIDES.adjustments || {};
+  OVERRIDES.banPriority  = OVERRIDES.banPriority  || {};
+  OVERRIDES.matchups     = OVERRIDES.matchups     || {};
+  OVERRIDES.notes        = OVERRIDES.notes        || '';
 }
 
 function saveOverrides() {
-  // Overrides are now file-based — the Export button lets you download
-  // the updated file to commit to your repo
-  console.log('Overrides are file-based. Use Export to save changes.');
+  localStorage.setItem('brawldraft-overrides', JSON.stringify(OVERRIDES));
 }
 
 // Apply override matchup on top of data matchup
@@ -2069,22 +2055,15 @@ function getBanPriority(name) {
   return OVERRIDES.banPriority[name];
 }
 
-async function initOverrides() {
-  await loadOverrides();
+function initOverrides() {
+  loadOverrides();
   renderOverridesTab();
 
   document.getElementById('ov-export-btn').addEventListener('click', () => {
-    // Export as overrides.json — upload this file to your GitHub repo to save changes
-    const exportData = {
-      adjustments: OVERRIDES.adjustments,
-      banPriority:  OVERRIDES.banPriority,
-      matchups:     OVERRIDES.matchups,
-      notes:        OVERRIDES.notes,
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:'application/json'});
+    const blob = new Blob([JSON.stringify(OVERRIDES, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'overrides.json';
+    a.download = 'brawl-overrides.json';
     a.click();
   });
 
@@ -2108,6 +2087,7 @@ async function initOverrides() {
   document.getElementById('ov-reset-btn').addEventListener('click', () => {
     if (!confirm('Reset all overrides? This cannot be undone.')) return;
     OVERRIDES = {adjustments:{}, banPriority:{}, matchups:{}, notes:''};
+    saveOverrides();
     renderOverridesTab();
   });
 
