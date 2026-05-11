@@ -680,7 +680,7 @@ function debounce(fn, ms) {
 
 // requestAnimationFrame-based render queue — batch DOM updates
 let _rafPending = false;
-let _pendingRenders = new Set();
+let _pendingRenders = new Map();
 
 function scheduleRender(name, fn) {
   _pendingRenders.set(name, fn);
