@@ -640,6 +640,61 @@ const TIER_BG = {S:'#3a1a1a',A:'#2d1f0e',B:'#2d2a0e',C:'#0e2d18',D:'#0e1f3a',F:'
 
 
 
+// ── PERFORMANCE: SCORE CACHE + DEBOUNCE ──────────────────────────────────────
+
+// Score cache — keyed by context + draft state
+// Invalidated whenever draftAllies/draftEnemies/ctx changes
+let _scoreCache = {};
+let _scoreCacheKey = '';
+
+function getScoreCacheKey() {
+  const ctx = getDraftCtxKey ? getDraftCtxKey() : 'all|all';
+  return `${ctx}|${draftAllies.join(',')}|${draftEnemies.join(',')}|${document.getElementById('draft-side')?.value}`;
+}
+
+function invalidateScoreCache() {
+  _scoreCache = {};
+  _scoreCacheKey = getScoreCacheKey();
+}
+
+function cachedScorePick(name) {
+  const key = 'p:' + name;
+  if (_scoreCache[key] === undefined) _scoreCache[key] = scorePick(name, getDraftCtxKey());
+  return _scoreCache[key];
+}
+
+function cachedScoreBan(name, forEnemy) {
+  const key = `b:${name}:${forEnemy}`;
+  if (_scoreCache[key] === undefined) _scoreCache[key] = scoreBan(name, getDraftCtxKey(), forEnemy);
+  return _scoreCache[key];
+}
+
+// Debounce: delay expensive renders until input settles
+function debounce(fn, ms) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
+
+// requestAnimationFrame-based render queue — batch DOM updates
+let _rafPending = false;
+let _pendingRenders = new Set();
+
+function scheduleRender(name, fn) {
+  _pendingRenders.set(name, fn);
+  if (!_rafPending) {
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      const renders = new Map(_pendingRenders);
+      _pendingRenders.clear();
+      for (const [, renderFn] of renders) renderFn();
+    });
+  }
+}
+
 // ── DATA LOADING ──────────────────────────────────────────────────────────────
 // Data is split across multiple files for fast loading:
 //   data/meta.json    — brawler list, modes, maps index
@@ -874,16 +929,16 @@ function populateModeSelects() {
       });
 
       // Re-render with new context
-      if (pfx === 'draft') { renderBrawlerGrid(); renderSuggestions(); }
+      if (pfx === 'draft') { invalidateScoreCache(); scheduleRender('grid', renderBrawlerGrid); scheduleRender('suggestions', renderSuggestions); }
       if (pfx === 'mu') renderMatchup();
-      if (pfx === 'stats') renderStats();
+      if (pfx === 'stats') scheduleRender('stats', renderStats);
     });
 
     // Map change → re-render with selected map
     mapEl.addEventListener('change', () => {
-      if (pfx === 'draft') { renderBrawlerGrid(); renderSuggestions(); }
+      if (pfx === 'draft') { invalidateScoreCache(); scheduleRender('grid', renderBrawlerGrid); scheduleRender('suggestions', renderSuggestions); }
       if (pfx === 'mu') renderMatchup();
-      if (pfx === 'stats') renderStats();
+      if (pfx === 'stats') scheduleRender('stats', renderStats);
     });
   });
 }
@@ -1143,6 +1198,11 @@ function renderEnemySlots() {
   });
 }
 
+// Cache last rendered grid state to avoid full rebuilds
+let _gridLastCtx = '';
+let _gridLastSearch = '';
+let _gridLastFilter = '';
+
 function renderBrawlerGrid() {
   const grid   = document.getElementById('brawler-grid');
   const ctx    = getDraftCtxKey();
@@ -1153,6 +1213,30 @@ function renderBrawlerGrid() {
   if (gridSearch) brawlers = brawlers.filter(b => b.toLowerCase().includes(gridSearch));
   if (gridFilter === 'available') brawlers = brawlers.filter(b => !taken.has(b));
 
+  // If context/filter changed, full rebuild (unavoidable)
+  // Otherwise just update CSS classes on existing cards (fast)
+  const ctxChanged = ctx !== _gridLastCtx || gridSearch !== _gridLastSearch || gridFilter !== _gridLastFilter;
+  _gridLastCtx = ctx; _gridLastSearch = gridSearch; _gridLastFilter = gridFilter;
+
+  if (!ctxChanged && grid.children.length === brawlers.length) {
+    // Fast path: just update classes
+    grid.querySelectorAll('.brawler-card').forEach(card => {
+      const name = card.dataset.name;
+      if (!name) return;
+      const isAlly    = draftAllies.includes(name);
+      const isEnemy   = draftEnemies.includes(name);
+      const isAllyBan = draftAllyBans.includes(name);
+      const isEnemyBan= draftEnemyBans.includes(name);
+      card.className = 'brawler-card' + (
+        isAlly || isAllyBan  ? ' as-ally'  :
+        isEnemy || isEnemyBan? ' as-enemy' :
+        taken.has(name)      ? ' unavailable' : ''
+      );
+    });
+    return;
+  }
+
+  // Full rebuild
   grid.innerHTML = brawlers.map(b => {
     const s   = bs[b];
     const wr  = s && s.wins + s.losses > 0 ? s.wins / (s.wins + s.losses) : null;
@@ -1197,11 +1281,12 @@ function renderBrawlerGrid() {
 }
 
 function renderDraft() {
+  invalidateScoreCache();
   renderDraftOrderBar();
   renderTeamSlots();
   renderEnemySlots();
-  renderBrawlerGrid();
-  renderSuggestions();
+  scheduleRender('grid', renderBrawlerGrid);
+  scheduleRender('suggestions', renderSuggestions);
 }
 
 function getBrawlerWR(name, ctx) {
@@ -1647,7 +1732,7 @@ function renderSuggestions() {
       const hint = document.createElement('div');
       const candidates = allBrawlers()
         .filter(b => !taken.has(b))
-        .map(b => ({ name: b, score: scoreBan(b, ctx, false), wr: getBrawlerWR(b, ctx) }))
+        .map(b => ({ name: b, score: cachedScoreBan(b, false), wr: getBrawlerWR(b, ctx) }))
         .filter(b => b.score !== null)
         .sort((a, b) => b.score - a.score)
         .slice(0, 8);
@@ -1692,7 +1777,7 @@ function renderSuggestions() {
     title.textContent = `🚫 Your Ban ${banNum}/3`;
     const candidates = allBrawlers()
       .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: scoreBan(b, ctx, true), wr: getBrawlerWR(b, ctx) }))
+      .map(b => ({ name: b, score: cachedScoreBan(b, true), wr: getBrawlerWR(b, ctx) }))
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
@@ -1710,7 +1795,7 @@ function renderSuggestions() {
     title.textContent = `⚔ Your ${pickLabel} Pick`;
     const candidates = allBrawlers()
       .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: scorePick(b, ctx), wr: getBrawlerWR(b, ctx) }))
+      .map(b => ({ name: b, score: cachedScorePick(b), wr: getBrawlerWR(b, ctx) }))
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
       .slice(0, 15);
@@ -1925,7 +2010,10 @@ function initMatchup() {
   });
 }
 
-function renderMatchup() {
+const renderMatchupDebounced = debounce(_renderMatchupInner, 120);
+function renderMatchup() { scheduleRender('matchup', renderMatchupDebounced); }
+
+function _renderMatchupInner() {
   const ctx    = getMuCtxKey();
   const ms     = getMatchupStats(ctx);
   const minG   = parseInt(document.getElementById('mu-min').value) || 10;
@@ -1977,6 +2065,8 @@ function renderMatchup() {
 function initStats() {
   renderStats();
 }
+
+const renderStatsDebounced = debounce(renderStats, 80);
 
 function renderStats() {
   const ctx = getStatsCtxKey();
@@ -2290,9 +2380,9 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     }
     // Re-render when switching tabs so data is fresh
     if (META) {
-      if (tab.dataset.tab === 'overrides') renderOverridesTab();
-      if (tab.dataset.tab === 'stats')    renderStats();
-      if (tab.dataset.tab === 'matchup')  renderMatchup();
+      if (tab.dataset.tab === 'overrides') scheduleRender('overrides', renderOverridesTab);
+      if (tab.dataset.tab === 'stats')     scheduleRender('stats', renderStats);
+      if (tab.dataset.tab === 'matchup')   renderMatchup();
     }
   });
 });
