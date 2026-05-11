@@ -652,6 +652,50 @@ const TIER_BG = {S:'#3a1a1a',A:'#2d1f0e',B:'#2d2a0e',C:'#0e2d18',D:'#0e1f3a',F:'
 // ms[id][id] = [wins, losses]
 
 let META    = null;   // meta.json
+let ACTIVE_MAPS = {
+  brawlBall: [
+    "Backyard Bowl","Triple Dribble","Pinhole Punt","Sneaky Fields",
+    "Super Beach","Pinball Dreams","Center Stage","Beach Ball",
+    "Sunny Soccer","Priceless Cactus","Rooftop Runners","Grass Knot",
+    "Spiraling Out","Sidetrack","Match 1123581321","Flute Chutes",
+    "Grab the Moment","Singed Earth","Nutmeg","Goalies","No Good Deed"
+  ],
+  gemGrab: [
+    "Hard Rock Mine","Crystal Arcade","Deathcap Trap","Gem Fort",
+    "Undermine","Double Swoosh","Rustic Arcade","Open Space",
+    "Lilygear Lake","Local Restaurants","On a Roll","Storage Sector",
+    "Whisper Vale","Extreme Nonchalance","ATLAS","Afterparty",
+    "Railroad Robbery","Snake Pit","Fortress Fall","Picturesque",
+    "Satomi Springs","Ancestral Roots"
+  ],
+  knockout: [
+    "Goldarm Gulch","Belle's Rock","Deep End","Flaring Phoenix",
+    "Flowing Springs","New Perspective","Out in the Open",
+    "Healthy Middle Ground","New Horizons","Four Levels","H for...",
+    "Double Decker","Streets with No Name","Think Ahead",
+    "Call of the Water","Party for You","A Ballad About Minced Cutlets",
+    "Chivalry","Konnakol","Pinned Down","Opening Move",
+    "Crab Claws","Please Remain Standing"
+  ],
+  bounty: [
+    "Shooting Star","Hideout","Layer Cake","Dry Season",
+    "No Excuses","Don't turn around","Side by Side","Brace for Impact",
+    "Starrburst","Wall Hugging","Choral Chambers","Watermelons","Hit and Run"
+  ],
+  heist: [
+    "Kaboom Canyon","Safe Zone","Hot Potato","Bridge Too Far",
+    "Pit Stop","GG 2.0","Plain Text","Subway Turfers",
+    "Zip Zap Zoom","Corner Cave","All Things Wicked","Photic Doom",
+    "Aridity","Quintillion","Tuning Fork","Perpetual Motion","Eating Good!"
+  ],
+  hotZone: [
+    "Open Business","Parallel Plays","Ring of Fire","Dueling Beetles",
+    "Open Zone","Fishing Bed","Abracadabra","In the Liminal",
+    "Playmaker","Just Another Race To Anywhere","Back Shuffle",
+    "Zone Splitting","Ticket to Die","Tax Evasion",
+    "The Seven Pillars of Humanity","Golden Bay","Hyacinth House"
+  ],
+};
 let OVERALL = null;   // overall.json decoded
 let MODE_CACHE = {};  // mode -> decoded data
 
@@ -665,14 +709,9 @@ async function loadData() {
     if (!metaR.ok)    throw new Error(`meta.json: HTTP ${metaR.status}`);
     if (!overallR.ok) throw new Error(`overall.json: HTTP ${overallR.status}`);
     META    = await metaR.json();
-    console.log('META loaded:', META.brawlers.length, 'brawlers,', META.modes.length, 'modes');
     const raw = await overallR.json();
-    console.log('overall.json raw keys:', Object.keys(raw));
     OVERALL = decodeContext(raw);
-    console.log('OVERALL decoded bs keys:', Object.keys(OVERALL.bs).length, 'brawlers');
-    console.log('Calling onDataLoaded...');
     onDataLoaded();
-    console.log('onDataLoaded complete');
   } catch(e) {
     console.error('loadData error:', e);
     document.querySelector('.load-text').textContent =
@@ -825,7 +864,9 @@ function populateModeSelects() {
 
       // Populate map dropdown
       mapEl.innerHTML = '<option value="">All Maps</option>';
-      const maps = (META.maps && META.maps[mode]) || [];
+      const allMaps    = (META.maps && META.maps[mode]) || [];
+      const activeMaps = ACTIVE_MAPS && ACTIVE_MAPS[mode] ? ACTIVE_MAPS[mode] : null;
+      const maps = activeMaps ? allMaps.filter(m => activeMaps.includes(m)) : allMaps;
       maps.forEach(m => {
         const o = document.createElement('option');
         o.value = m; o.textContent = m;
@@ -2299,7 +2340,7 @@ function exportMatchupCSV() {
   URL.revokeObjectURL(a.href);
 }
 
-// ── BOOT ─────────────────────────────────────────────────────────────────────
+// ── BOOT ──────────────────────────────────────────────────────────────────────
 // Render enemy slots once DOM is ready (they're in the draft panel)
 document.addEventListener('DOMContentLoaded', () => {
   // Add enemies panel header
