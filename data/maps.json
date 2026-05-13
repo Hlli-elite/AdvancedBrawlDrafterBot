@@ -1,0 +1,47 @@
+{
+  "updated": "2026-05-11T20:50:06.841442Z",
+  "active_maps": {
+    "brawlBall": [
+      "Match 1123581321",
+      "Spiraling Out"
+    ],
+    "soloShowdown": [
+      "Safety Center"
+    ],
+    "gemGrab": [
+      "Crystal Arcade",
+      "Gem Fort"
+    ],
+    "hotZone": [
+      "Hyacinth House"
+    ],
+    "duoShowdown": [
+      "Safety Center"
+    ],
+    "knockout": [
+      "Crab Claws",
+      "Out in the Open"
+    ],
+    "bounty": [
+      "Choral Chambers"
+    ],
+    "airHockey": [
+      "Slippery Showdown"
+    ],
+    "trioShowdown": [
+      "Safety Center"
+    ],
+    "brawlArena": [
+      "Arena of Glory"
+    ],
+    "brawlBall5V5": [
+      "Stockpile Stadium"
+    ],
+    "basketBrawl": [
+      "Turnover"
+    ],
+    "knockout5V5": [
+      "Crescendo"
+    ]
+  }
+}
