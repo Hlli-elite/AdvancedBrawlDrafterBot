@@ -203,10 +203,10 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 .brawler-card.as-enemy{border-color:var(--red);background:var(--red-dim)}
 .brawler-card.unavailable{opacity:.3;pointer-events:none}
 .brawler-card .bc-name{
-  font-family:var(--display);font-size:.58rem;font-weight:700;
-  letter-spacing:.3px;text-align:center;line-height:1.1;
+  font-family:var(--display);font-size:.64rem;font-weight:700;
+  letter-spacing:.3px;text-align:center;line-height:1.1;color:var(--text);
 }
-.brawler-card .bc-wr{font-family:var(--mono);font-size:.55rem;color:var(--text3)}
+.brawler-card .bc-wr{font-family:var(--mono);font-size:.58rem;color:var(--text3)}
 .brawler-card .bc-tier{
   position:absolute;top:2px;right:4px;
   font-family:var(--mono);font-size:.6rem;font-weight:700;
@@ -1702,6 +1702,59 @@ function getPickBreakdown(name, ctx) {
   return { wr, ctr, saf, worstCounter };
 }
 
+
+// Async chunked scoring — scores brawlers in batches to avoid blocking the main thread
+function scoreAsync(brawlers, isBan, token, hintText, isYours, list, prefixHTML='') {
+  const CHUNK = 20; // score 20 brawlers per frame
+  const results = [];
+  let idx = 0;
+
+  const hintHTML = hintText
+    ? `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${hintText}</div>`
+    : prefixHTML;
+
+  function processChunk() {
+    if (token !== _suggestionRenderToken) return; // stale, abort
+    const end = Math.min(idx + CHUNK, brawlers.length);
+    for (; idx < end; idx++) {
+      const b = brawlers[idx];
+      const score = isBan ? cachedScoreBan(b, !prefixHTML) : cachedScorePick(b);
+      if (score !== null) results.push({ name: b, score });
+    }
+    if (idx < brawlers.length) {
+      setTimeout(processChunk, 0); // yield to browser, continue next frame
+    } else {
+      // All scored — sort and render
+      if (token !== _suggestionRenderToken) return;
+      results.sort((a, b) => b.score - a.score);
+      const ctx = getDraftCtxKey();
+      const html = results.map((c, i) => suggestionCard(c, i, isBan, isYours)).join('');
+      list.innerHTML = hintHTML + (html || '<div class="no-picks">Not enough data</div>');
+      // Wire click handlers
+      list.querySelectorAll('.suggestion-card').forEach(card => {
+        card.addEventListener('click', () => {
+          const name = card.dataset.name;
+          if (allTaken().has(name)) return;
+          const seq = getDraftSequence(document.getElementById('draft-side').value);
+          const step = seq[getCurrentStepIndex()];
+          if (!step) return;
+          if (step.phase === 'ban') {
+            if (step.team === 'ally' && draftAllyBans.length < 3)   draftAllyBans.push(name);
+            if (step.team === 'enemy' && draftEnemyBans.length < 3) draftEnemyBans.push(name);
+          } else {
+            if (step.team === 'ally' && draftAllies.length < 3)   draftAllies.push(name);
+            if (step.team === 'enemy' && draftEnemies.length < 3) draftEnemies.push(name);
+          }
+          renderDraft();
+        });
+      });
+    }
+  }
+  setTimeout(processChunk, 0);
+}
+
+let _suggestionRenderToken = 0; // cancel stale renders
+
 function renderSuggestions() {
   const list  = document.getElementById('suggestions-list');
   const title = document.getElementById('suggestions-title');
@@ -1727,33 +1780,14 @@ function renderSuggestions() {
     // so user knows what to expect and can record it
     if (isBan) {
       // Predict which brawlers enemy will ban (our strongest options)
-      title.textContent = '🔮 Record Enemy Ban';
-      const hint = document.createElement('div');
+      title.textContent = isBan ? '🔮 Record Enemy Ban' : '🔮 Record Enemy Pick';
+      const hintMsg = isBan
+        ? 'Click to record what the enemy banned. Predicted targets below.'
+        : 'Click to record what the enemy picked. Predicted picks below.';
+      const pfx = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">${hintMsg}</div>`;
+      list.innerHTML = pfx + '<div class="no-picks" style="opacity:.4">Calculating…</div>';
+      scoreAsync(allBrawlers().filter(b => !taken.has(b)), isBan, myToken, '', false, list, pfx);
       const candidates = allBrawlers()
-        .filter(b => !taken.has(b))
-        .map(b => ({ name: b, score: cachedScoreBan(b, false), wr: getBrawlerWR(b, ctx) }))
-        .filter(b => b.score !== null)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 120);
-      list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
-        Click to record what the enemy banned. Predicted targets shown below.
-      </div>` + (candidates.length
-        ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
-        : '<div class="no-picks">Not enough data</div>');
-    } else {
-      title.textContent = '🔮 Record Enemy Pick';
-      const candidates = allBrawlers()
-        .filter(b => !taken.has(b))
-        .map(b => ({ name: b, score: scorePick(b, ctx), wr: getBrawlerWR(b, ctx) }))
-        .filter(b => b.score !== null)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 120);
-      list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
-        Click to record what the enemy picked. Predicted picks shown below.
-      </div>` + (candidates.length
-        ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
-        : '<div class="no-picks">Not enough data</div>');
-    }
     // clicking still records enemy action
     list.querySelectorAll('.suggestion-card').forEach(card => {
       card.addEventListener('click', () => {
@@ -1767,23 +1801,17 @@ function renderSuggestions() {
     return;
   }
 
-  // Your turn
+  // Your turn — score asynchronously in chunks to avoid lag spikes
+  const myToken = ++_suggestionRenderToken;
+
   if (isBan) {
-    const banNum = draftAllyBans.length + 1;
+    const banNum   = draftAllyBans.length + 1;
     const sideLabel = side === 'second'
       ? 'Enemy has first pick — ban their strongest brawlers'
       : 'You have first pick — ban counters to top picks';
     title.textContent = `🚫 Your Ban ${banNum}/3`;
-    const candidates = allBrawlers()
-      .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: cachedScoreBan(b, true), wr: getBrawlerWR(b, ctx) }))
-      .filter(b => b.score !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 120);
-    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${sideLabel}</div>` +
-      (candidates.length
-        ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
-        : '<div class="no-picks">Not enough data</div>');
+    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${sideLabel}</div><div class="no-picks" style="opacity:.4">Calculating…</div>`;
+    scoreAsync(allBrawlers().filter(b => !taken.has(b)), true, myToken, sideLabel, true, list);
   } else {
     const pickLabel = ['1st', '2nd', '3rd'][draftAllies.length] || '';
     const pickNote  = side === 'first' && draftAllies.length === 0
@@ -1792,31 +1820,10 @@ function renderSuggestions() {
       ? 'Last pick — hard counter the enemy team'
       : 'Pick the best available counter';
     title.textContent = `⚔ Your ${pickLabel} Pick`;
-    const candidates = allBrawlers()
-      .filter(b => !taken.has(b))
-      .map(b => ({ name: b, score: cachedScorePick(b), wr: getBrawlerWR(b, ctx) }))
-      .filter(b => b.score !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 120);
-    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div>` +
-      (candidates.length
-        ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
-        : '<div class="no-picks">Not enough data</div>');
+    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div><div class="no-picks" style="opacity:.4">Calculating…</div>`;
+    scoreAsync(allBrawlers().filter(b => !taken.has(b)), false, myToken, pickNote, true, list);
   }
 
-  // Click to place
-  list.querySelectorAll('.suggestion-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const name = card.dataset.name;
-      if (allTaken().has(name)) return;
-      if (isBan) {
-        if (draftAllyBans.length < 3) draftAllyBans.push(name);
-      } else {
-        if (draftAllies.length < 3) draftAllies.push(name);
-      }
-      renderDraft();
-    });
-  });
 }
 
 function suggestionCard(c, i, isBan, isYours) {
