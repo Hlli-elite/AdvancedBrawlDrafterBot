@@ -128,7 +128,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 /* DRAFT TAB                                                                   */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 #tab-draft .draft-layout{
-  display:grid;grid-template-columns:170px 1fr 300px;
+  display:flex;flex-direction:row;
   gap:0;flex:1;overflow:hidden;min-height:0;
 }
 
@@ -436,55 +436,60 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
           <option value="first">First Pick</option>
           <option value="second">Second Pick</option>
         </select>
-        <span class="ctx-label" style="margin-left:16px">Phase</span>
-        <select class="ctx-select" id="draft-phase">
-          <option value="ban">Ban Phase</option>
-          <option value="pick">Pick Phase</option>
-        </select>
         <button class="tier-btn" id="draft-reset" style="margin-left:auto">Reset Draft</button>
       </div>
 
-      <!-- Draft order indicator -->
+      <!-- Draft order bar -->
       <div id="draft-order-bar" style="
-        display:flex;align-items:center;gap:6px;padding:8px 24px;
+        display:flex;align-items:center;gap:4px;padding:6px 16px;
         background:var(--bg1);border-bottom:1px solid var(--border);
-        font-family:var(--mono);font-size:.72rem;flex-shrink:0;overflow-x:auto;
+        font-family:var(--mono);font-size:.68rem;flex-shrink:0;overflow-x:auto;
       "></div>
 
+      <!-- Main 3-column layout: teams | grid | suggestions -->
       <div class="draft-layout">
-        <!-- Left: bans + your team -->
-        <div class="team-panel allies" style="min-width:170px;max-width:170px">
-          <div class="sec-hdr" style="font-size:.75rem">Your Bans</div>
-          <div id="ally-ban-slots" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
-          <div class="sec-hdr" style="font-size:.75rem">Your Team</div>
-          <div id="ally-slots"></div>
+
+        <!-- LEFT: your bans + team, enemy bans + team -->
+        <div style="display:flex;flex-direction:column;overflow-y:auto;border-right:1px solid var(--border);flex-shrink:0;width:160px">
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+            <div class="sec-hdr" style="font-size:.7rem;margin-bottom:6px">Your Bans</div>
+            <div id="ally-ban-slots" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+            <div class="sec-hdr" style="font-size:.7rem;margin-bottom:6px">Your Team</div>
+            <div id="ally-slots"></div>
+          </div>
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+            <div class="sec-hdr" style="font-size:.7rem;margin-bottom:6px;color:var(--red)">Enemy Bans</div>
+            <div id="enemy-ban-slots" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
+          <div style="padding:10px 12px">
+            <div class="sec-hdr" style="font-size:.7rem;margin-bottom:6px;color:var(--red)">Enemy Team</div>
+            <div id="enemy-slots" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
         </div>
 
-        <!-- Center: brawler grid -->
-        <div class="brawler-grid-panel">
+        <!-- CENTER: suggestions (primary focus) -->
+        <div style="display:flex;flex-direction:column;overflow:hidden;flex:1;min-width:0">
+          <div style="padding:8px 14px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:8px">
+            <div class="sec-hdr" id="suggestions-title" style="margin-bottom:0;flex:1">Suggestions</div>
+            <span style="font-family:var(--mono);font-size:.65rem;color:var(--text3)">Click to place</span>
+          </div>
+          <div id="suggestions-list" style="flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:6px">
+            <div class="no-picks">Set up the draft to see suggestions</div>
+          </div>
+        </div>
+
+        <!-- RIGHT: brawler grid (secondary, for manual picks) -->
+        <div class="brawler-grid-panel" style="width:280px;flex-shrink:0;border-left:1px solid var(--border)">
           <div class="grid-toolbar">
-            <input class="grid-search" id="grid-search" placeholder="Search brawler…" type="text">
+            <input class="grid-search" id="grid-search" placeholder="Search…" type="text" style="width:100px">
             <button class="grid-filter-btn on" data-f="all">All</button>
-            <button class="grid-filter-btn" data-f="available">Available</button>
+            <button class="grid-filter-btn" data-f="available">Free</button>
           </div>
           <div class="brawler-grid" id="brawler-grid"></div>
         </div>
 
-        <!-- Right: enemy + suggestions -->
-        <div style="display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--border)">
-          <!-- Enemy bans + team (compact) -->
-          <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-            <div class="sec-hdr" style="font-size:.75rem;margin-bottom:8px">Enemy Bans</div>
-            <div id="enemy-ban-slots" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px"></div>
-            <div class="sec-hdr" style="font-size:.75rem;margin-bottom:8px">Enemy Team</div>
-            <div id="enemy-slots" style="display:flex;flex-direction:column;gap:4px"></div>
-          </div>
-          <!-- Suggestions -->
-          <div class="suggestions-panel" style="flex:1;overflow-y:auto">
-            <div class="sec-hdr" id="suggestions-title">Suggestions</div>
-            <div id="suggestions-list"><div class="no-picks">Set up the draft to see suggestions</div></div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -1822,64 +1827,63 @@ function renderSuggestions() {
 
 function suggestionCard(c, i, isBan, isYours) {
   const tier  = TIERLIST[c.name] || '';
-  const pct   = (c.score * 100).toFixed(1);
   const color = isBan ? 'var(--red)' : 'var(--amber)';
   const ctx   = getDraftCtxKey();
   const bs    = getBrawlerStats(ctx);
   const ms    = getMatchupStats(ctx);
   const wr    = rawWR(c.name, bs);
-  const ctr   = !isBan ? counterScoreVs(c.name, draftEnemies, bs, ms) : null;
-  const saf   = !isBan ? safetyScoreVs(c.name, draftEnemies, bs, ms) : null;
+  const ctr   = !isBan && draftEnemies.length > 0 ? counterScoreVs(c.name, draftEnemies, bs, ms) : null;
+  const saf   = !isBan && draftEnemies.length > 0 ? safetyScoreVs(c.name, draftEnemies, bs, ms) : null;
 
-  // Lookahead: worst likely counter for pick cards
   let worstNote = '';
   if (!isBan && draftEnemies.length < 3) {
-    const taken = allTaken();
-    const simTaken = new Set([...taken, c.name]);
+    const simTaken = new Set([...allTaken(), c.name]);
     const likely = predictEnemyPicks(3, simTaken, bs, ms, draftEnemies);
     const worst = likely.map(ep => {
-      const strength = matchupStrength(ep, c.name, ms);
-      // Only flag if confidence is meaningful (enough games)
       const rec = ms[ep] && ms[ep][c.name];
-      const total = rec ? rec.wins + rec.losses : 0;
-      return total >= MIN_GAMES_WEAK ? {b: ep, mu: strength} : null;
+      const tot = rec ? rec.wins + rec.losses : 0;
+      return tot >= MIN_GAMES_WEAK ? {b: ep, mu: matchupStrength(ep, c.name, ms)} : null;
     }).filter(Boolean).sort((a,b) => b.mu - a.mu)[0];
-    if (worst && worst.mu > 0.55) {
-      worstNote = `<div style="margin-top:5px;font-family:var(--mono);font-size:.62rem;color:var(--red);opacity:.8">
-        ⚠ Countered by likely ${worst.b} (${(worst.mu*100).toFixed(0)}%)
-      </div>`;
+    if (worst && worst.mu > 0.57) {
+      worstNote = `<div style="margin-top:4px;font-family:var(--mono);font-size:.62rem;color:var(--red)">⚠ Countered by ${worst.b} (${(worst.mu*100).toFixed(0)}%)</div>`;
     }
   }
 
-  return `<div class="suggestion-card" data-name="${c.name}"
-    style="cursor:${isYours?'pointer':'default'};${isBan?'border-left-color:var(--red)':''}">
-    <div class="sg-header">
-      <span class="sg-rank">${i+1}</span>
-      <span class="sg-name">${c.name}</span>
-      ${tier ? `<span class="bc-tier tier-${tier}">${tier}</span>` : ''}
-      <span class="sg-score" style="color:${color}">${pct}</span>
+  const wrPct  = (wr * 100).toFixed(1);
+  const ctrPct = ctr !== null ? (ctr * 100).toFixed(1) : null;
+  const safPct = saf !== null ? (saf * 100).toFixed(1) : null;
+  const scorePct = (c.score * 100).toFixed(1);
+  const cols = ctrPct && safPct ? '1fr 1fr 1fr' : ctrPct ? '1fr 1fr' : '1fr';
+
+  return `<div class="suggestion-card" data-name="${c.name}" style="cursor:${isYours?'pointer':'default'};border-left-color:${color};padding:10px 14px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-family:var(--mono);font-size:.65rem;color:var(--text3);min-width:16px">${i+1}</span>
+      <span style="font-family:var(--display);font-weight:800;font-size:1.1rem;letter-spacing:.5px;flex:1">${c.name}</span>
+      ${tier ? `<span class="bc-tier tier-${tier}" style="font-size:.72rem">${tier}</span>` : ''}
+      <span style="font-family:var(--mono);font-size:.85rem;font-weight:700;color:${color}">${scorePct}</span>
     </div>
-    <div class="sg-bars">
-      <div class="sg-bar-row">
-        <span class="sg-bar-label">Win Rate</span>
-        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(wr*100).toFixed(1)}%;background:${wrColor(wr)}"></div></div>
-        <span class="sg-bar-val" style="color:${wrColor(wr)}">${(wr*100).toFixed(1)}%</span>
+    <div style="display:grid;grid-template-columns:${cols};gap:4px 10px">
+      <div>
+        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">WIN RATE</div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${wrPct}%;height:100%;background:${wrColor(wr)};border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(wr)}">${wrPct}%</span>
+        </div>
       </div>
-      ${ctr !== null ? `<div class="sg-bar-row">
-        <span class="sg-bar-label">vs Enemy</span>
-        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(ctr*100).toFixed(1)}%;background:${wrColor(ctr)}"></div></div>
-        <span class="sg-bar-val" style="color:${wrColor(ctr)}">${(ctr*100).toFixed(1)}%</span>
+      ${ctrPct ? `<div>
+        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">VS ENEMY</div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${ctrPct}%;height:100%;background:${wrColor(ctr)};border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(ctr)}">${ctrPct}%</span>
+        </div>
       </div>` : ''}
-      ${saf !== null ? `<div class="sg-bar-row">
-        <span class="sg-bar-label">Safety</span>
-        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${(saf*100).toFixed(1)}%;background:${wrColor(saf)}"></div></div>
-        <span class="sg-bar-val" style="color:${wrColor(saf)}">${(saf*100).toFixed(1)}%</span>
+      ${safPct ? `<div>
+        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">SAFETY</div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${safPct}%;height:100%;background:${wrColor(saf)};border-radius:3px"></div></div>
+          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(saf)}">${safPct}%</span>
+        </div>
       </div>` : ''}
-      <div class="sg-bar-row">
-        <span class="sg-bar-label">Score</span>
-        <div class="sg-bar-track"><div class="sg-bar-fill" style="width:${Math.min(100,c.score*140).toFixed(1)}%;background:${color}"></div></div>
-        <span class="sg-bar-val" style="color:${color}">${pct}</span>
-      </div>
     </div>
     ${worstNote}
   </div>`;
