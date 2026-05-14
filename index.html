@@ -756,13 +756,12 @@ let MODE_CACHE = {};  // mode -> decoded data
 async function loadData() {
   try {
     document.querySelector('.load-text').textContent = 'Loading meta...';
-    const [metaR, overallR] = await Promise.all([
-      fetch('data/meta.json'),
-      fetch('data/overall.json'),
-    ]);
-    if (!metaR.ok)    throw new Error(`meta.json: HTTP ${metaR.status}`);
+    const metaR = await fetch('data/meta.json');
+    if (!metaR.ok) throw new Error(`meta.json: HTTP ${metaR.status}`);
+    META = await metaR.json();
+    document.querySelector('.load-text').textContent = `Loading stats (${META.brawlers.length} brawlers)...`;
+    const overallR = await fetch('data/overall.json');
     if (!overallR.ok) throw new Error(`overall.json: HTTP ${overallR.status}`);
-    META    = await metaR.json();
     const raw = await overallR.json();
     OVERALL = decodeContext(raw);
     onDataLoaded();
@@ -1774,36 +1773,21 @@ function renderSuggestions() {
   const isBan  = step.phase === 'ban';
   const isYour = step.team === 'ally';
   const side   = document.getElementById('draft-side').value;
+  const myToken = ++_suggestionRenderToken;
 
   if (!isYour) {
-    // Recording enemy turn — show what we predict they picked/banned
-    // so user knows what to expect and can record it
-    if (isBan) {
-      // Predict which brawlers enemy will ban (our strongest options)
-      title.textContent = isBan ? '🔮 Record Enemy Ban' : '🔮 Record Enemy Pick';
-      const hintMsg = isBan
-        ? 'Click to record what the enemy banned. Predicted targets below.'
-        : 'Click to record what the enemy picked. Predicted picks below.';
-      const pfx = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">${hintMsg}</div>`;
-      list.innerHTML = pfx + '<div class="no-picks" style="opacity:.4">Calculating…</div>';
-      scoreAsync(allBrawlers().filter(b => !taken.has(b)), isBan, myToken, '', false, list, pfx);
-      const candidates = allBrawlers()
-    // clicking still records enemy action
-    list.querySelectorAll('.suggestion-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const name = card.dataset.name;
-        if (allTaken().has(name)) return;
-        if (isBan) { if (draftEnemyBans.length < 3) draftEnemyBans.push(name); }
-        else        { if (draftEnemies.length   < 3) draftEnemies.push(name);   }
-        renderDraft();
-      });
-    });
+  if (!isYour) {
+    const hintMsg = isBan
+      ? 'Click to record what the enemy banned. Predicted targets below.'
+      : 'Click to record what the enemy picked. Predicted picks below.';
+    title.textContent = isBan ? '🔮 Record Enemy Ban' : '🔮 Record Enemy Pick';
+    const pfx = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">${hintMsg}</div>`;
+    list.innerHTML = pfx + '<div class="no-picks" style="opacity:.4">Calculating…</div>';
+    scoreAsync(allBrawlers().filter(b => !taken.has(b)), isBan, myToken, '', false, list, pfx);
     return;
   }
 
   // Your turn — score asynchronously in chunks to avoid lag spikes
-  const myToken = ++_suggestionRenderToken;
-
   if (isBan) {
     const banNum   = draftAllyBans.length + 1;
     const sideLabel = side === 'second'
@@ -1823,6 +1807,8 @@ function renderSuggestions() {
     list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div><div class="no-picks" style="opacity:.4">Calculating…</div>`;
     scoreAsync(allBrawlers().filter(b => !taken.has(b)), false, myToken, pickNote, true, list);
   }
+
+}
 
 }
 
