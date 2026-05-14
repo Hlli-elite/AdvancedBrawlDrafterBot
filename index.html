@@ -1702,6 +1702,61 @@ function getPickBreakdown(name, ctx) {
 }
 
 
+function renderSuggestions() {
+  const list  = document.getElementById('suggestions-list');
+  const title = document.getElementById('suggestions-title');
+  const taken = allTaken();
+  const seq   = getDraftSequence(document.getElementById('draft-side').value);
+  const cur   = getCurrentStepIndex();
+  const myToken = ++_suggestionRenderToken;
+
+  if (cur >= seq.length) {
+    title.textContent = 'Draft Complete';
+    list.innerHTML = '<div class="no-picks">Draft is finished. Good luck!</div>';
+    return;
+  }
+
+  const step   = seq[cur];
+  const isBan  = step.phase === 'ban';
+  const isYour = step.team === 'ally';
+  const side   = document.getElementById('draft-side').value;
+  const avail  = allBrawlers().filter(b => !taken.has(b));
+
+  if (!isYour) {
+    const hintMsg = isBan
+      ? 'Click to record what the enemy banned. Predicted targets below.'
+      : 'Click to record what the enemy picked. Predicted picks below.';
+    title.textContent = isBan ? 'Record Enemy Ban' : 'Record Enemy Pick';
+    const pfx = '<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">' + hintMsg + '</div>';
+    list.innerHTML = pfx + '<div class="no-picks" style="opacity:.4">Calculating...</div>';
+    scoreAsync(avail, isBan, myToken, '', false, list, pfx);
+    return;
+  }
+
+  if (isBan) {
+    const banNum    = draftAllyBans.length + 1;
+    const sideLabel = side === 'second'
+      ? 'Enemy has first pick - ban their strongest brawlers'
+      : 'You have first pick - ban counters to top picks';
+    title.textContent = 'Your Ban ' + banNum + '/3';
+    list.innerHTML = '<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">' + sideLabel + '</div>'
+      + '<div class="no-picks" style="opacity:.4">Calculating...</div>';
+    scoreAsync(avail, true, myToken, sideLabel, true, list);
+  } else {
+    const labels   = ['1st', '2nd', '3rd'];
+    const pickLabel = labels[draftAllies.length] || '';
+    const pickNote  = side === 'first' && draftAllies.length === 0
+      ? 'First pick - choose a strong safe brawler'
+      : side === 'second' && draftAllies.length === 2
+      ? 'Last pick - hard counter the enemy team'
+      : 'Pick the best available counter';
+    title.textContent = 'Your ' + pickLabel + ' Pick';
+    list.innerHTML = '<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">' + pickNote + '</div>'
+      + '<div class="no-picks" style="opacity:.4">Calculating...</div>';
+    scoreAsync(avail, false, myToken, pickNote, true, list);
+  }
+}
+
 // Async chunked scoring — scores brawlers in batches to avoid blocking the main thread
 function scoreAsync(brawlers, isBan, token, hintText, isYours, list, prefixHTML='') {
   const CHUNK = 20; // score 20 brawlers per frame
@@ -1753,64 +1808,9 @@ function scoreAsync(brawlers, isBan, token, hintText, isYours, list, prefixHTML=
 }
 
 let _suggestionRenderToken = 0; // cancel stale renders
-
-function renderSuggestions() {
-  const list  = document.getElementById('suggestions-list');
-  const title = document.getElementById('suggestions-title');
-  const ctx   = getDraftCtxKey();
-  const taken = allTaken();
-
-  const seq = getDraftSequence(document.getElementById('draft-side').value);
-  const cur = getCurrentStepIndex();
-
-  if (cur >= seq.length) {
-    title.textContent = '✅ Draft Complete';
-    list.innerHTML = '<div class="no-picks">Draft is finished. Good luck!</div>';
-    return;
-  }
-
-  const step = seq[cur];
-  const isBan  = step.phase === 'ban';
-  const isYour = step.team === 'ally';
-  const side   = document.getElementById('draft-side').value;
-  const myToken = ++_suggestionRenderToken;
-
-  if (!isYour) {
-  if (!isYour) {
-    const hintMsg = isBan
-      ? 'Click to record what the enemy banned. Predicted targets below.'
-      : 'Click to record what the enemy picked. Predicted picks below.';
-    title.textContent = isBan ? '🔮 Record Enemy Ban' : '🔮 Record Enemy Pick';
-    const pfx = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">${hintMsg}</div>`;
-    list.innerHTML = pfx + '<div class="no-picks" style="opacity:.4">Calculating…</div>';
-    scoreAsync(allBrawlers().filter(b => !taken.has(b)), isBan, myToken, '', false, list, pfx);
-    return;
-  }
-
-  // Your turn — score asynchronously in chunks to avoid lag spikes
-  if (isBan) {
-    const banNum   = draftAllyBans.length + 1;
-    const sideLabel = side === 'second'
-      ? 'Enemy has first pick — ban their strongest brawlers'
-      : 'You have first pick — ban counters to top picks';
-    title.textContent = `🚫 Your Ban ${banNum}/3`;
-    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${sideLabel}</div><div class="no-picks" style="opacity:.4">Calculating…</div>`;
-    scoreAsync(allBrawlers().filter(b => !taken.has(b)), true, myToken, sideLabel, true, list);
-  } else {
-    const pickLabel = ['1st', '2nd', '3rd'][draftAllies.length] || '';
-    const pickNote  = side === 'first' && draftAllies.length === 0
-      ? 'First pick — choose a strong safe brawler'
-      : side === 'second' && draftAllies.length === 2
-      ? 'Last pick — hard counter the enemy team'
-      : 'Pick the best available counter';
-    title.textContent = `⚔ Your ${pickLabel} Pick`;
-    list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div><div class="no-picks" style="opacity:.4">Calculating…</div>`;
-    scoreAsync(allBrawlers().filter(b => !taken.has(b)), false, myToken, pickNote, true, list);
-  }
-
-}
-
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// SUGGESTION CARD
+// ═══════════════════════════════════════════════════════════════════════════
 
 function suggestionCard(c, i, isBan, isYours) {
   const tier  = TIERLIST[c.name] || '';
@@ -1832,7 +1832,7 @@ function suggestionCard(c, i, isBan, isYours) {
       return tot >= MIN_GAMES_WEAK ? {b: ep, mu: matchupStrength(ep, c.name, ms)} : null;
     }).filter(Boolean).sort((a,b) => b.mu - a.mu)[0];
     if (worst && worst.mu > 0.57) {
-      warn = `<span style="font-family:var(--mono);font-size:.58rem;color:var(--red);margin-left:6px">⚠${worst.b}</span>`;
+      warn = '<span style="font-family:var(--mono);font-size:.58rem;color:var(--red);margin-left:6px">! ' + worst.b + '</span>';
     }
   }
 
@@ -1841,50 +1841,33 @@ function suggestionCard(c, i, isBan, isYours) {
   const safPct   = saf !== null ? (saf * 100).toFixed(1) : null;
   const scorePct = (c.score * 100).toFixed(1);
 
-  return `<div class="suggestion-card" data-name="${c.name}" style="
-    cursor:${isYours?'pointer':'default'};
-    border-left:3px solid ${color};
-    padding:7px 12px;
-    display:flex;align-items:center;gap:10px;
-    border-radius:4px;
-    background:var(--bg2);
-    border-top:none;border-right:none;border-bottom:none;
-    margin-bottom:3px;
-    min-height:0;
-  ">
-    <span style="font-family:var(--mono);font-size:.62rem;color:var(--text3);width:16px;text-align:right;flex-shrink:0">${i+1}</span>
-    <span style="font-family:var(--display);font-weight:800;font-size:.95rem;letter-spacing:.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}${warn}</span>
-    ${tier ? `<span class="bc-tier tier-${tier}" style="font-size:.65rem;flex-shrink:0">${tier}</span>` : ''}
-    <div style="display:flex;gap:8px;flex-shrink:0;align-items:center">
-      <div style="display:flex;align-items:center;gap:3px">
-        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">WR</span>
-        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(wr)}">${wrPct}%</span>
-      </div>
-      ${ctrPct ? `<div style="display:flex;align-items:center;gap:3px">
-        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">CTR</span>
-        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(ctr)}">${ctrPct}%</span>
-      </div>` : ''}
-      ${safPct ? `<div style="display:flex;align-items:center;gap:3px">
-        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">SAF</span>
-        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(saf)}">${safPct}%</span>
-      </div>` : ''}
-      <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${color};min-width:32px;text-align:right">${scorePct}</span>
-    </div>
-  </div>`;
+  return '<div class="suggestion-card" data-name="' + c.name + '" style="'
+    + 'cursor:' + (isYours ? 'pointer' : 'default') + ';'
+    + 'border-left:3px solid ' + color + ';'
+    + 'padding:7px 12px;display:flex;align-items:center;gap:10px;'
+    + 'background:var(--bg2);margin-bottom:3px;border-radius:4px;">'
+    + '<span style="font-family:var(--mono);font-size:.62rem;color:var(--text3);width:16px;text-align:right;flex-shrink:0">' + (i+1) + '</span>'
+    + '<span style="font-family:var(--display);font-weight:800;font-size:.95rem;letter-spacing:.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + c.name + warn + '</span>'
+    + (tier ? '<span class="bc-tier tier-' + tier + '" style="font-size:.65rem;flex-shrink:0">' + tier + '</span>' : '')
+    + '<div style="display:flex;gap:8px;flex-shrink:0;align-items:center">'
+    + '<div style="display:flex;align-items:center;gap:3px"><span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">WR</span><span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:' + wrColor(wr) + '">' + wrPct + '%</span></div>'
+    + (ctrPct ? '<div style="display:flex;align-items:center;gap:3px"><span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">CTR</span><span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:' + wrColor(ctr) + '">' + ctrPct + '%</span></div>' : '')
+    + (safPct ? '<div style="display:flex;align-items:center;gap:3px"><span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">SAF</span><span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:' + wrColor(saf) + '">' + safPct + '%</span></div>' : '')
+    + '<span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:' + color + ';min-width:32px;text-align:right">' + scorePct + '</span>'
+    + '</div></div>';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TIER LIST
 // ═══════════════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════════════
-// TIER LIST
-// ═══════════════════════════════════════════════════════════════════════════
+
+const TIERS = ['S','A','B','C','D','F'];
+const TIER_COLORS = {S:'#ff6b6b',A:'#ffa94d',B:'#ffd43b',C:'#69db7c',D:'#74c0fc',F:'#8892b0'};
+const TIER_BG     = {S:'#3a1a1a',A:'#2d1f0e',B:'#2d2a0e',C:'#0e2d18',D:'#0e1f3a',F:'#111520'};
 let dragBrawler = null;
-let dragFrom    = null;
 
 function initTierList() {
   renderTierList();
-
   document.getElementById('tier-export-btn').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(TIERLIST, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -1892,7 +1875,6 @@ function initTierList() {
     a.download = 'brawl-tierlist.json';
     a.click();
   });
-
   document.getElementById('tier-import-btn').addEventListener('click', () => {
     document.getElementById('tier-import-file').click();
   });
@@ -1905,7 +1887,7 @@ function initTierList() {
         TIERLIST = JSON.parse(ev.target.result);
         saveTierList();
         renderTierList();
-        renderBrawlerGrid(); // update tier badges in draft
+        renderBrawlerGrid();
       } catch { alert('Invalid JSON'); }
     };
     reader.readAsText(file);
@@ -1916,47 +1898,37 @@ function saveTierList() {
   localStorage.setItem('brawldraft-tierlist', JSON.stringify(TIERLIST));
 }
 
+function loadTierList() {
+  const saved = localStorage.getItem('brawldraft-tierlist');
+  if (saved) { try { TIERLIST = JSON.parse(saved); } catch(e) {} }
+}
+
 function renderTierList() {
-  // Untiered pool
-  const untiered = document.getElementById('tier-untiered');
-  const tieredSet = new Set(Object.keys(TIERLIST));
+  const untiered   = document.getElementById('tier-untiered');
+  const tieredSet  = new Set(Object.keys(TIERLIST));
   const untieredBrawlers = allBrawlers().filter(b => !tieredSet.has(b));
 
-  untiered.innerHTML = untieredBrawlers.map(b => tierCellHTML(b, 'untiered')).join('');
+  untiered.innerHTML = untieredBrawlers.map(b => tierCellHTML(b)).join('');
   setupDragOnCells(untiered, 'untiered');
 
-  // Tier rows
   const rows = document.getElementById('tier-rows');
   rows.innerHTML = TIERS.map(tier => {
     const brawlers = Object.entries(TIERLIST).filter(([,t]) => t === tier).map(([b]) => b).sort();
-    return `<div class="tier-row">
-      <div class="tier-label" style="background:${TIER_BG[tier]};color:${TIER_COLORS[tier]}">${tier}</div>
-      <div class="tier-cells" data-tier="${tier}" 
-           style="background:${TIER_BG[tier]}20">
-        ${brawlers.map(b => tierCellHTML(b, tier)).join('')}
-      </div>
-    </div>`;
+    return '<div class="tier-row"><div class="tier-label" style="background:' + TIER_BG[tier] + ';color:' + TIER_COLORS[tier] + '">' + tier + '</div>'
+      + '<div class="tier-cells" data-tier="' + tier + '" style="background:' + TIER_BG[tier] + '20">'
+      + brawlers.map(b => tierCellHTML(b)).join('') + '</div></div>';
   }).join('');
 
-  // Setup drag on each tier cells container
-  rows.querySelectorAll('.tier-cells').forEach(container => {
-    setupDragOnCells(container, container.dataset.tier);
-  });
-
-  // Dropzones
-  [untiered, ...rows.querySelectorAll('.tier-cells')].forEach(zone => {
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  const allZones = [untiered, ...rows.querySelectorAll('.tier-cells')];
+  allZones.forEach(zone => {
+    setupDragOnCells(zone, zone.dataset ? zone.dataset.tier : null);
+    zone.addEventListener('dragover', e => { e.preventDefault(); });
     zone.addEventListener('drop', e => {
       e.preventDefault();
-      zone.classList.remove('drag-over');
       const targetTier = zone.dataset ? zone.dataset.tier : null;
       if (!dragBrawler) return;
-      if (targetTier) {
-        TIERLIST[dragBrawler] = targetTier;
-      } else {
-        delete TIERLIST[dragBrawler];
-      }
+      if (targetTier) TIERLIST[dragBrawler] = targetTier;
+      else delete TIERLIST[dragBrawler];
       dragBrawler = null;
       saveTierList();
       renderTierList();
@@ -1965,37 +1937,32 @@ function renderTierList() {
   });
 }
 
-function tierCellHTML(name, tier) {
+function tierCellHTML(name) {
   const t = TIERLIST[name] || '';
-  return `<div class="tier-cell" draggable="true" data-name="${name}" data-tier="${tier}">
-    ${t ? `<span style="color:${TIER_COLORS[t]};font-size:.65rem;font-weight:800">${t}</span>` : ''}
-    ${name}
-  </div>`;
+  return '<div class="tier-cell" draggable="true" data-name="' + name + '">'
+    + (t ? '<span style="color:' + TIER_COLORS[t] + ';font-size:.65rem;font-weight:800">' + t + '</span>' : '')
+    + name + '</div>';
 }
 
 function setupDragOnCells(container, tier) {
   container.querySelectorAll('.tier-cell').forEach(cell => {
     cell.addEventListener('dragstart', () => {
       dragBrawler = cell.dataset.name;
-      dragFrom    = tier;
       setTimeout(() => cell.classList.add('dragging'), 0);
     });
-    cell.addEventListener('dragend', () => {
-      cell.classList.remove('dragging');
-    });
+    cell.addEventListener('dragend', () => cell.classList.remove('dragging'));
   });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MATCHUP MATRIX
 // ═══════════════════════════════════════════════════════════════════════════
+
 function initMatchup() {
   renderMatchup();
   document.getElementById('mu-apply').addEventListener('click', renderMatchup);
+  document.getElementById('mu-search').addEventListener('keydown', e => { if (e.key === 'Enter') renderMatchup(); });
   document.getElementById('mu-export-csv').addEventListener('click', exportMatchupCSV);
-  document.getElementById('mu-search').addEventListener('keydown', e => {
-    if (e.key === 'Enter') renderMatchup();
-  });
 }
 
 const renderMatchupDebounced = debounce(_renderMatchupInner, 120);
@@ -2019,27 +1986,26 @@ function _renderMatchupInner() {
     return;
   }
 
-  let html = '<thead><tr><th>vs →</th>';
-  cols.forEach(c => html += `<th title="${c}">${c.length > 8 ? c.slice(0,8)+'…' : c}</th>`);
+  let html = '<thead><tr><th>vs</th>';
+  cols.forEach(c => html += '<th title="' + c + '">' + (c.length > 8 ? c.slice(0,8)+'...' : c) + '</th>');
   html += '</tr></thead><tbody>';
 
   rows.forEach(row => {
-    html += `<tr><th>${row}</th>`;
+    html += '<tr><th>' + row + '</th>';
     cols.forEach(col => {
-      if (row === col) { html += `<td class="self">—</td>`; return; }
+      if (row === col) { html += '<td class="self">-</td>'; return; }
       const rec = ms[row] && ms[row][col] ? ms[row][col] : null;
       const tot = rec ? rec.wins + rec.losses : 0;
-      if (!rec || tot < minG) { html += `<td class="nd" title="${tot} games">·</td>`; return; }
+      if (!rec || tot < minG) { html += '<td class="nd" title="' + tot + ' games">.</td>'; return; }
       const wr = rec.wins / tot;
       const pct = Math.round(wr * 100);
-      // Smooth color: 35% = full red, 65% = full green
-      const t = Math.max(0, Math.min(1, (wr - 0.35) / 0.30));
-      const rr = Math.round(239 + (34 - 239) * t);
-      const gg = Math.round(68  + (197 - 68) * t);
-      const bb = Math.round(68  + (94 - 68)  * t);
-      const bg = `rgba(${rr},${gg},${bb},${0.1 + Math.abs(wr-.5) * 0.9})`;
+      const t  = Math.max(0, Math.min(1, (wr - 0.35) / 0.30));
+      const rr = Math.round(239 + (34  - 239) * t);
+      const gg = Math.round(68  + (197 - 68)  * t);
+      const bb = Math.round(68  + (94  - 68)  * t);
+      const bg = 'rgba(' + rr + ',' + gg + ',' + bb + ',' + (0.1 + Math.abs(wr-.5) * 0.9) + ')';
       const fc = wr >= .55 ? 'var(--green)' : wr <= .45 ? 'var(--red)' : 'var(--text)';
-      html += `<td style="background:${bg};color:${fc}" title="${row} vs ${col}: ${rec.wins}W ${rec.losses}L (${tot} games)">${pct}%</td>`;
+      html += '<td style="background:' + bg + ';color:' + fc + '" title="' + row + ' vs ' + col + ': ' + rec.wins + 'W ' + rec.losses + 'L (' + tot + ' games)">' + pct + '%</td>';
     });
     html += '</tr>';
   });
@@ -2047,12 +2013,43 @@ function _renderMatchupInner() {
   table.innerHTML = html;
 }
 
+function exportMatchupCSV() {
+  const ctx    = getMuCtxKey();
+  const ms     = getMatchupStats(ctx);
+  const minG   = parseInt(document.getElementById('mu-min').value) || 10;
+  const search = document.getElementById('mu-search').value.toUpperCase().trim();
+  const allB   = new Set();
+  Object.keys(ms).forEach(a => { allB.add(a); Object.keys(ms[a]).forEach(b => allB.add(b)); });
+  const cols = [...allB].sort();
+  let rows = [...allB].sort();
+  if (search) rows = rows.filter(b => b.includes(search));
+  if (!rows.length) { alert('No data to export.'); return; }
+  const lines = [['brawler vs', ...cols].join(',')];
+  rows.forEach(row => {
+    const cells = [row];
+    cols.forEach(col => {
+      if (row === col) { cells.push(''); return; }
+      const rec = ms[row] && ms[row][col] ? ms[row][col] : null;
+      const tot = rec ? rec.wins + rec.losses : 0;
+      if (!rec || tot < minG) { cells.push(''); return; }
+      cells.push((rec.wins / tot * 100).toFixed(1) + '%');
+    });
+    lines.push(cells.join(','));
+  });
+  const [mode, map] = ctx.split('|');
+  const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'matchup_' + mode + '_' + map + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // STATS
 // ═══════════════════════════════════════════════════════════════════════════
-function initStats() {
-  renderStats();
-}
+
+function initStats() { renderStats(); }
 
 const renderStatsDebounced = debounce(renderStats, 80);
 
@@ -2062,97 +2059,62 @@ function renderStats() {
   const entries = Object.entries(bs);
   if (!entries.length) return;
 
-  const totalPicks = entries.reduce((a, [,s]) => a + s.picks, 0);
-  const maxPicks   = Math.max(...entries.map(([,s]) => s.picks));
-
-  // Summary cards
-  const sorted = entries.sort((a,b) => b[1].picks - a[1].picks);
-  const eligible = entries.filter(([,s]) => s.picks >= 20);
-  const topPick  = sorted[0];
-  const topWR    = [...eligible].sort((a,b) => (b[1].wins/b[1].picks) - (a[1].wins/a[1].picks))[0];
-  const botWR    = [...eligible].sort((a,b) => (a[1].wins/a[1].picks) - (b[1].wins/b[1].picks))[0];
+  const totalPicks = entries.reduce((a,[,s]) => a + s.picks, 0);
+  const sorted     = [...entries].sort((a,b) => b[1].picks - a[1].picks);
+  const eligible   = entries.filter(([,s]) => s.picks >= 20);
+  const topPick    = sorted[0];
+  const topWR      = [...eligible].sort((a,b) => (b[1].wins/b[1].picks)-(a[1].wins/a[1].picks))[0];
+  const botWR      = [...eligible].sort((a,b) => (a[1].wins/a[1].picks)-(b[1].wins/b[1].picks))[0];
 
   document.getElementById('summary-cards').innerHTML = [
-    {val: entries.length, label: 'Brawlers Tracked', col: 'var(--amber)'},
-    {val: totalPicks.toLocaleString(), label: 'Total Picks', col: 'var(--blue)'},
-    {val: topPick ? topPick[0] : '—', label: 'Most Picked', col: 'var(--green)'},
-    {val: topWR ? topWR[0] : '—', label: 'Best Win Rate', col: 'var(--green)'},
-    {val: botWR ? botWR[0] : '—', label: 'Worst Win Rate', col: 'var(--red)'},
-  ].map(c => `<div class="summary-card" style="--accent:${c.col}">
-    <div class="sc-val">${c.val}</div>
-    <div class="sc-label">${c.label}</div>
-  </div>`).join('');
+    {val: entries.length,              label: 'Brawlers Tracked', col: 'var(--amber)'},
+    {val: totalPicks.toLocaleString(), label: 'Total Picks',       col: 'var(--blue)'},
+    {val: topPick ? topPick[0] : '-',  label: 'Most Picked',       col: 'var(--green)'},
+    {val: topWR   ? topWR[0]  : '-',   label: 'Best Win Rate',     col: 'var(--green)'},
+    {val: botWR   ? botWR[0]  : '-',   label: 'Worst Win Rate',    col: 'var(--red)'},
+  ].map(c => '<div class="summary-card" style="--accent:' + c.col + '"><div class="sc-val">' + c.val + '</div><div class="sc-label">' + c.label + '</div></div>').join('');
 
   function hbar(name, val, maxVal, color, fmt) {
     const w = (val / maxVal * 100).toFixed(1);
-    return `<div class="hbar-row">
-      <div class="hbar-name" title="${name}">${name}</div>
-      <div class="hbar-track"><div class="hbar-fill" style="width:${w}%;background:${color}">${fmt}</div></div>
-      <div class="hbar-val" style="color:${color}">${fmt}</div>
-    </div>`;
+    return '<div class="hbar-row"><div class="hbar-name" title="' + name + '">' + name + '</div>'
+      + '<div class="hbar-track"><div class="hbar-fill" style="width:' + w + '%;background:' + color + '">' + fmt + '</div></div>'
+      + '<div class="hbar-val" style="color:' + color + '">' + fmt + '</div></div>';
   }
 
-  // Top pick rate (top 12)
-  const topPicks = sorted.slice(0, 120);
+  const topPicks = sorted.slice(0, 12);
   const maxP = topPicks[0][1].picks;
-  document.getElementById('pick-list').innerHTML = topPicks.map(([n,s]) => {
-    const pp = (s.picks / totalPicks * 100).toFixed(1) + '%';
-    return hbar(n, s.picks, maxP, 'var(--blue)', pp);
-  }).join('');
+  document.getElementById('pick-list').innerHTML = topPicks.map(([n,s]) =>
+    hbar(n, s.picks, maxP, 'var(--blue)', (s.picks/totalPicks*100).toFixed(1)+'%')).join('');
 
-  // Best WR
-  const topWRs = [...eligible].sort((a,b) => (b[1].wins/b[1].picks)-(a[1].wins/a[1].picks)).slice(0,12);
-  const maxWR = topWRs[0] ? topWRs[0][1].wins / topWRs[0][1].picks : 1;
+  const topWRs = [...eligible].sort((a,b)=>(b[1].wins/b[1].picks)-(a[1].wins/a[1].picks)).slice(0,12);
+  const maxWR  = topWRs[0] ? topWRs[0][1].wins/topWRs[0][1].picks : 1;
   document.getElementById('wr-list').innerHTML = topWRs.map(([n,s]) => {
-    const wr = s.wins / s.picks;
-    const col = wrColor(wr);
-    return hbar(n, wr, maxWR, col, (wr*100).toFixed(1)+'%');
+    const wr = s.wins/s.picks;
+    return hbar(n, wr, maxWR, wrColor(wr), (wr*100).toFixed(1)+'%');
   }).join('');
 
-  // Worst WR
-  const botWRs = [...eligible].sort((a,b) => (a[1].wins/a[1].picks)-(b[1].wins/b[1].picks)).slice(0,12);
-  const minWRval = botWRs[0] ? botWRs[0][1].wins/botWRs[0][1].picks : 0;
-  const maxWRbot = botWRs[botWRs.length-1] ? botWRs[botWRs.length-1][1].wins/botWRs[botWRs.length-1][1].picks : 1;
+  const botWRs = [...eligible].sort((a,b)=>(a[1].wins/a[1].picks)-(b[1].wins/b[1].picks)).slice(0,12);
+  const maxWRb = botWRs[botWRs.length-1] ? botWRs[botWRs.length-1][1].wins/botWRs[botWRs.length-1][1].picks : 1;
   document.getElementById('wrl-list').innerHTML = botWRs.map(([n,s]) => {
-    const wr = s.wins / s.picks;
-    const col = wrColor(wr);
-    return hbar(n, wr, maxWRbot, col, (wr*100).toFixed(1)+'%');
+    const wr = s.wins/s.picks;
+    return hbar(n, wr, maxWRb, wrColor(wr), (wr*100).toFixed(1)+'%');
   }).join('');
 
-  // Least picked
-  const leastPicks = [...sorted].reverse().slice(0, 120);
+  const leastPicks = [...sorted].reverse().slice(0,12);
   const maxLP = leastPicks[leastPicks.length-1][1].picks;
-  document.getElementById('lowpick-list').innerHTML = leastPicks.map(([n,s]) => {
-    const pp = (s.picks / totalPicks * 100).toFixed(2) + '%';
-    return hbar(n, s.picks, Math.max(maxLP,1), 'var(--text3)', pp);
-  }).join('');
+  document.getElementById('lowpick-list').innerHTML = leastPicks.map(([n,s]) =>
+    hbar(n, s.picks, Math.max(maxLP,1), 'var(--text3)', (s.picks/totalPicks*100).toFixed(2)+'%')).join('');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OVERRIDES
 // ═══════════════════════════════════════════════════════════════════════════
 
-// OVERRIDES structure:
-// {
-//   adjustments: { EDGAR: 5, MORTIS: -3, ... }   score deltas (-20 to +20)
-//   banPriority: { MORTIS: 'always', COLT: 'never', ... }
-//   matchups: { "EDGAR|MORTIS": 0.62, ... }       manual WR overrides
-//   notes: "..."
-// }
-
-let OVERRIDES = {
-  adjustments: {},
-  banPriority: {},
-  matchups: {},
-  notes: ''
-};
+let OVERRIDES = { adjustments: {}, banPriority: {}, matchups: {}, notes: '' };
 
 function loadOverrides() {
   const saved = localStorage.getItem('brawldraft-overrides');
-  if (saved) {
-    try { OVERRIDES = JSON.parse(saved); }
-    catch(e) { console.warn('Failed to load overrides:', e); }
-  }
+  if (saved) { try { OVERRIDES = JSON.parse(saved); } catch(e) {} }
   OVERRIDES.adjustments = OVERRIDES.adjustments || {};
   OVERRIDES.banPriority  = OVERRIDES.banPriority  || {};
   OVERRIDES.matchups     = OVERRIDES.matchups     || {};
@@ -2163,26 +2125,8 @@ function saveOverrides() {
   localStorage.setItem('brawldraft-overrides', JSON.stringify(OVERRIDES));
 }
 
-// Apply override matchup on top of data matchup
-function getMatchupWR(a, b, ms) {
-  const key = `${a}|${b}`;
-  const keyRev = `${b}|${a}`;
-  if (OVERRIDES.matchups[key]   !== undefined) return OVERRIDES.matchups[key];
-  if (OVERRIDES.matchups[keyRev] !== undefined) return 1 - OVERRIDES.matchups[keyRev];
-  const rec = ms[a] && ms[a][b];
-  if (!rec || rec.wins + rec.losses < 3) return null;
-  return rec.wins / (rec.wins + rec.losses);
-}
-
-// Score adjustment getter
-function getScoreAdj(name) {
-  return (OVERRIDES.adjustments[name] || 0) / 100;  // convert -20..+20 to -0.2..+0.2
-}
-
-// Ban priority getter: 'always' | 'never' | undefined
-function getBanPriority(name) {
-  return OVERRIDES.banPriority[name];
-}
+function getScoreAdj(name)    { return (OVERRIDES.adjustments[name] || 0) / 100; }
+function getBanPriority(name) { return OVERRIDES.banPriority[name]; }
 
 function initOverrides() {
   loadOverrides();
@@ -2195,7 +2139,6 @@ function initOverrides() {
     a.download = 'brawl-overrides.json';
     a.click();
   });
-
   document.getElementById('ov-import-btn').addEventListener('click', () => {
     document.getElementById('ov-import-file').click();
   });
@@ -2204,55 +2147,40 @@ function initOverrides() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      try {
-        OVERRIDES = JSON.parse(ev.target.result);
-        saveOverrides();
-        renderOverridesTab();
-      } catch { alert('Invalid JSON'); }
+      try { OVERRIDES = JSON.parse(ev.target.result); saveOverrides(); renderOverridesTab(); }
+      catch { alert('Invalid JSON'); }
     };
     reader.readAsText(file);
   });
-
   document.getElementById('ov-reset-btn').addEventListener('click', () => {
-    if (!confirm('Reset all overrides? This cannot be undone.')) return;
+    if (!confirm('Reset all overrides?')) return;
     OVERRIDES = {adjustments:{}, banPriority:{}, matchups:{}, notes:''};
-    saveOverrides();
-    renderOverridesTab();
+    saveOverrides(); renderOverridesTab();
   });
-
   document.getElementById('ov-adj-search').addEventListener('input', renderAdjList);
-
   document.getElementById('ov-mu-add').addEventListener('click', () => {
     const a  = document.getElementById('ov-mu-a').value;
     const b  = document.getElementById('ov-mu-b').value;
     const wr = parseFloat(document.getElementById('ov-mu-wr').value);
-    if (!a || !b || a === b || isNaN(wr) || wr < 0 || wr > 100) {
-      alert('Pick two different brawlers and a win rate 0-100.');
-      return;
-    }
-    OVERRIDES.matchups[`${a}|${b}`] = wr / 100;
-    saveOverrides();
-    renderMuOverrideList();
+    if (!a || !b || a === b || isNaN(wr) || wr < 0 || wr > 100) { alert('Pick two different brawlers and a win rate 0-100.'); return; }
+    OVERRIDES.matchups[a + '|' + b] = wr / 100;
+    saveOverrides(); renderMuOverrideList();
     document.getElementById('ov-mu-wr').value = '';
   });
-
   document.getElementById('ov-notes').value = OVERRIDES.notes;
   document.getElementById('ov-notes').addEventListener('input', e => {
-    OVERRIDES.notes = e.target.value;
-    saveOverrides();
+    OVERRIDES.notes = e.target.value; saveOverrides();
   });
 }
 
 function renderOverridesTab() {
-  // Populate brawler selects
   const brawlers = allBrawlers();
   ['ov-mu-a','ov-mu-b'].forEach(id => {
     const el = document.getElementById(id);
     const cur = el.value;
-    el.innerHTML = '<option value="">Select brawler</option>' +
-      brawlers.map(b => `<option value="${b}" ${b===cur?'selected':''}>${b}</option>`).join('');
+    el.innerHTML = '<option value="">Select brawler</option>'
+      + brawlers.map(b => '<option value="' + b + '"' + (b===cur?' selected':'') + '>' + b + '</option>').join('');
   });
-
   renderAdjList();
   renderBanPriorityList();
   renderMuOverrideList();
@@ -2260,113 +2188,84 @@ function renderOverridesTab() {
 }
 
 function renderAdjList() {
-  const search  = document.getElementById('ov-adj-search').value.toLowerCase();
+  const search = document.getElementById('ov-adj-search').value.toLowerCase();
   const brawlers = allBrawlers().filter(b => b.toLowerCase().includes(search));
-  const container = document.getElementById('ov-adj-list');
-
-  container.innerHTML = brawlers.map(b => {
+  document.getElementById('ov-adj-list').innerHTML = brawlers.map(b => {
     const val = OVERRIDES.adjustments[b] || 0;
     const col = val > 0 ? 'var(--green)' : val < 0 ? 'var(--red)' : 'var(--text3)';
-    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;
-      padding:10px 14px;display:flex;align-items:center;gap:10px">
-      <span style="font-family:var(--display);font-weight:700;font-size:.9rem;flex:1">${b}</span>
-      <button class="tier-btn" onclick="adjBrawler('${b}',-5)" style="padding:3px 8px;font-size:.8rem">−5</button>
-      <button class="tier-btn" onclick="adjBrawler('${b}',-1)" style="padding:3px 8px;font-size:.8rem">−1</button>
-      <span style="font-family:var(--mono);font-weight:700;font-size:.9rem;color:${col};min-width:36px;text-align:center">
-        ${val > 0 ? '+' : ''}${val}
-      </span>
-      <button class="tier-btn" onclick="adjBrawler('${b}',1)" style="padding:3px 8px;font-size:.8rem">+1</button>
-      <button class="tier-btn" onclick="adjBrawler('${b}',5)" style="padding:3px 8px;font-size:.8rem">+5</button>
-      ${val !== 0 ? `<button class="tier-btn" onclick="adjBrawler('${b}',0,true)" style="padding:3px 8px;font-size:.75rem;color:var(--muted)">✕</button>` : ''}
-    </div>`;
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px">'
+      + '<span style="font-family:var(--display);font-weight:700;font-size:.9rem;flex:1">' + b + '</span>'
+      + '<button class="tier-btn" onclick="adjBrawler(\'' + b + '\',-5)" style="padding:3px 8px">-5</button>'
+      + '<button class="tier-btn" onclick="adjBrawler(\'' + b + '\',-1)" style="padding:3px 8px">-1</button>'
+      + '<span style="font-family:var(--mono);font-weight:700;font-size:.9rem;color:' + col + ';min-width:36px;text-align:center">' + (val > 0 ? '+' : '') + val + '</span>'
+      + '<button class="tier-btn" onclick="adjBrawler(\'' + b + '\',1)" style="padding:3px 8px">+1</button>'
+      + '<button class="tier-btn" onclick="adjBrawler(\'' + b + '\',5)" style="padding:3px 8px">+5</button>'
+      + (val !== 0 ? '<button class="tier-btn" onclick="adjBrawler(\'' + b + '\',0,true)" style="padding:3px 8px;color:var(--text3)">x</button>' : '')
+      + '</div>';
   }).join('');
 }
 
 function adjBrawler(name, delta, reset=false) {
-  if (reset) {
-    delete OVERRIDES.adjustments[name];
-  } else {
+  if (reset) { delete OVERRIDES.adjustments[name]; }
+  else {
     const cur = OVERRIDES.adjustments[name] || 0;
     OVERRIDES.adjustments[name] = Math.max(-20, Math.min(20, cur + delta));
     if (OVERRIDES.adjustments[name] === 0) delete OVERRIDES.adjustments[name];
   }
-  saveOverrides();
-  renderAdjList();
+  saveOverrides(); renderAdjList();
 }
 
 function renderBanPriorityList() {
-  const container = document.getElementById('ov-ban-list');
-  const brawlers  = allBrawlers();
-
-  container.innerHTML = brawlers.map(b => {
+  document.getElementById('ov-ban-list').innerHTML = allBrawlers().map(b => {
     const p   = OVERRIDES.banPriority[b];
     const col = p === 'always' ? 'var(--red)' : p === 'never' ? 'var(--blue)' : 'var(--border2)';
-    const lbl = p === 'always' ? '🚫 Always Ban' : p === 'never' ? '✅ Never Ban' : b;
-    return `<div style="border:1px solid ${col};border-radius:6px;padding:5px 10px;
-      background:${p?'var(--bg3)':'var(--bg2)'};cursor:pointer;font-size:.78rem;
-      font-family:var(--display);font-weight:700;display:flex;align-items:center;gap:6px"
-      onclick="cycleBanPriority('${b}')">
-      <span style="color:${col}">${lbl}</span>
-    </div>`;
+    const lbl = p === 'always' ? 'Always Ban' : p === 'never' ? 'Never Ban' : b;
+    return '<div style="border:1px solid ' + col + ';border-radius:6px;padding:5px 10px;background:' + (p ? 'var(--bg3)' : 'var(--bg2)') + ';cursor:pointer;font-size:.78rem;font-family:var(--display);font-weight:700" onclick="cycleBanPriority(\'' + b + '\')">'
+      + '<span style="color:' + col + '">' + lbl + '</span></div>';
   }).join('');
 }
 
 function cycleBanPriority(name) {
   const cur = OVERRIDES.banPriority[name];
-  if (!cur)           OVERRIDES.banPriority[name] = 'always';
-  else if (cur === 'always') OVERRIDES.banPriority[name] = 'never';
-  else                delete OVERRIDES.banPriority[name];
-  saveOverrides();
-  renderBanPriorityList();
+  if (!cur)                OVERRIDES.banPriority[name] = 'always';
+  else if (cur==='always') OVERRIDES.banPriority[name] = 'never';
+  else                     delete OVERRIDES.banPriority[name];
+  saveOverrides(); renderBanPriorityList();
 }
 
 function renderMuOverrideList() {
-  const container = document.getElementById('ov-mu-list');
-  const entries   = Object.entries(OVERRIDES.matchups);
-
+  const entries = Object.entries(OVERRIDES.matchups);
   if (!entries.length) {
-    container.innerHTML = '<div style="color:var(--text3);font-family:var(--mono);font-size:.78rem">No matchup overrides yet.</div>';
+    document.getElementById('ov-mu-list').innerHTML = '<div style="color:var(--text3);font-family:var(--mono);font-size:.78rem">No matchup overrides yet.</div>';
     return;
   }
-
-  container.innerHTML = entries.map(([key, wr]) => {
+  document.getElementById('ov-mu-list').innerHTML = entries.map(([key, wr]) => {
     const [a, b] = key.split('|');
     const pct    = (wr * 100).toFixed(0);
     const col    = wr >= 0.52 ? 'var(--green)' : wr <= 0.48 ? 'var(--red)' : 'var(--text)';
-    return `<div style="display:flex;align-items:center;gap:10px;background:var(--bg2);
-      border:1px solid var(--border);border-radius:8px;padding:8px 14px">
-      <span style="font-family:var(--display);font-weight:700;flex:1">${a}</span>
-      <span style="font-family:var(--mono);font-size:.75rem;color:var(--text3)">vs</span>
-      <span style="font-family:var(--display);font-weight:700;flex:1">${b}</span>
-      <span style="font-family:var(--mono);font-weight:700;color:${col};min-width:48px;text-align:right">${pct}% WR</span>
-      <button class="tier-btn" onclick="removeMuOverride('${key}')" 
-        style="color:var(--red);border-color:rgba(239,68,68,.3);padding:3px 8px">✕</button>
-    </div>`;
+    return '<div style="display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 14px">'
+      + '<span style="font-family:var(--display);font-weight:700;flex:1">' + a + '</span>'
+      + '<span style="font-family:var(--mono);font-size:.75rem;color:var(--text3)">vs</span>'
+      + '<span style="font-family:var(--display);font-weight:700;flex:1">' + b + '</span>'
+      + '<span style="font-family:var(--mono);font-weight:700;color:' + col + ';min-width:48px;text-align:right">' + pct + '% WR</span>'
+      + '<button class="tier-btn" onclick="removeMuOverride(\'' + key + '\')" style="color:var(--red);border-color:rgba(239,68,68,.3);padding:3px 8px">x</button>'
+      + '</div>';
   }).join('');
 }
 
 function removeMuOverride(key) {
   delete OVERRIDES.matchups[key];
-  saveOverrides();
-  renderMuOverrideList();
+  saveOverrides(); renderMuOverrideList();
 }
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.nav-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    // Hide all tabs cleanly
-    document.querySelectorAll('.tab-content').forEach(t => {
-      t.classList.remove('active');
-      t.style.display = 'none';
-    });
+    document.querySelectorAll('.tab-content').forEach(t => { t.classList.remove('active'); t.style.display = 'none'; });
     tab.classList.add('active');
-    const target = document.getElementById(`tab-${tab.dataset.tab}`);
-    if (target) {
-      target.classList.add('active');
-      target.style.display = 'flex';
-    }
-    // Re-render when switching tabs so data is fresh
+    const target = document.getElementById('tab-' + tab.dataset.tab);
+    if (target) { target.classList.add('active'); target.style.display = 'flex'; }
     if (META) {
       if (tab.dataset.tab === 'overrides') scheduleRender('overrides', renderOverridesTab);
       if (tab.dataset.tab === 'stats')     scheduleRender('stats', renderStats);
@@ -2375,62 +2274,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
   });
 });
 
-// ── MATCHUP CSV EXPORT ───────────────────────────────────────────────────────
-function exportMatchupCSV() {
-  const ctx    = getMuCtxKey();
-  const ms     = getMatchupStats(ctx);
-  const minG   = parseInt(document.getElementById('mu-min').value) || 10;
-  const search = document.getElementById('mu-search').value.toUpperCase().trim();
-
-  const allB = new Set();
-  Object.keys(ms).forEach(a => { allB.add(a); Object.keys(ms[a]).forEach(b => allB.add(b)); });
-  const cols = [...allB].sort();
-  let rows = [...allB].sort();
-  if (search) rows = rows.filter(b => b.includes(search));
-
-  if (!rows.length) { alert('No data to export.'); return; }
-
-  // Header row: blank cell then all column names
-  const lines = [];
-  lines.push(['brawler \\ vs', ...cols].join(','));
-
-  // Data rows
-  rows.forEach(row => {
-    const cells = [row];
-    cols.forEach(col => {
-      if (row === col) { cells.push(''); return; }
-      const rec = ms[row] && ms[row][col] ? ms[row][col] : null;
-      const tot = rec ? rec.wins + rec.losses : 0;
-      if (!rec || tot < minG) { cells.push(''); return; }
-      const wr = (rec.wins / tot * 100).toFixed(1);
-      cells.push(wr + '%');
-    });
-    lines.push(cells.join(','));
-  });
-
-  const csv = lines.join('\n');
-  const [mode, map] = ctx.split('|');
-  const blob = new Blob([csv], {type: 'text/csv'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `matchup_${mode}_${map}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
 // ── BOOT ──────────────────────────────────────────────────────────────────────
-// Render enemy slots once DOM is ready (they're in the draft panel)
 document.addEventListener('DOMContentLoaded', () => {
-  // Add enemies panel header
-  const enemiesPanel = document.querySelector('.team-panel.enemies');
-  if (enemiesPanel) {
-    const hdr = document.createElement('div');
-    hdr.className = 'sec-hdr';
-    hdr.textContent = 'Enemy Team';
-    enemiesPanel.insertBefore(hdr, enemiesPanel.firstChild);
-  }
   loadData();
 });
-</script>
-</body>
-</html>
