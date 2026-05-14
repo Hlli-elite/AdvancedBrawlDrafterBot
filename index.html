@@ -219,15 +219,9 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
   padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;
 }
 .suggestion-card{
-  border:1px solid var(--border);border-radius:6px;padding:12px;
-  background:var(--bg2);transition:all .15s;cursor:pointer;
-  position:relative;overflow:hidden;
+  transition:background .1s;
 }
-.suggestion-card::before{
-  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
-  background:var(--amber);
-}
-.suggestion-card:hover{border-color:var(--border2);background:var(--bg3)}
+.suggestion-card:hover{background:var(--bg3)!important}
 .sg-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .sg-rank{
   font-family:var(--mono);font-size:.65rem;color:var(--text3);
@@ -475,7 +469,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
             <div class="sec-hdr" id="suggestions-title" style="margin-bottom:0;flex:1">Suggestions</div>
             <span style="font-family:var(--mono);font-size:.65rem;color:var(--text3)">Click to place</span>
           </div>
-          <div id="suggestions-list" style="flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:6px">
+          <div id="suggestions-list" style="flex:1;overflow-y:auto;padding:8px 10px;">
             <div class="no-picks">Set up the draft to see suggestions</div>
           </div>
         </div>
@@ -1740,7 +1734,7 @@ function renderSuggestions() {
         .map(b => ({ name: b, score: cachedScoreBan(b, false), wr: getBrawlerWR(b, ctx) }))
         .filter(b => b.score !== null)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 8);
+        .slice(0, 120);
       list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
         Click to record what the enemy banned. Predicted targets shown below.
       </div>` + (candidates.length
@@ -1753,7 +1747,7 @@ function renderSuggestions() {
         .map(b => ({ name: b, score: scorePick(b, ctx), wr: getBrawlerWR(b, ctx) }))
         .filter(b => b.score !== null)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 10);
+        .slice(0, 120);
       list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;color:var(--amber)">
         Click to record what the enemy picked. Predicted picks shown below.
       </div>` + (candidates.length
@@ -1785,7 +1779,7 @@ function renderSuggestions() {
       .map(b => ({ name: b, score: cachedScoreBan(b, true), wr: getBrawlerWR(b, ctx) }))
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 12);
+      .slice(0, 120);
     list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${sideLabel}</div>` +
       (candidates.length
         ? candidates.map((c, i) => suggestionCard(c, i, true, true)).join('')
@@ -1803,7 +1797,7 @@ function renderSuggestions() {
       .map(b => ({ name: b, score: cachedScorePick(b), wr: getBrawlerWR(b, ctx) }))
       .filter(b => b.score !== null)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
+      .slice(0, 120);
     list.innerHTML = `<div class="no-picks" style="margin-bottom:8px;font-size:.72rem;color:var(--text3)">${pickNote}</div>` +
       (candidates.length
         ? candidates.map((c, i) => suggestionCard(c, i, false, true)).join('')
@@ -1835,7 +1829,7 @@ function suggestionCard(c, i, isBan, isYours) {
   const ctr   = !isBan && draftEnemies.length > 0 ? counterScoreVs(c.name, draftEnemies, bs, ms) : null;
   const saf   = !isBan && draftEnemies.length > 0 ? safetyScoreVs(c.name, draftEnemies, bs, ms) : null;
 
-  let worstNote = '';
+  let warn = '';
   if (!isBan && draftEnemies.length < 3) {
     const simTaken = new Set([...allTaken(), c.name]);
     const likely = predictEnemyPicks(3, simTaken, bs, ms, draftEnemies);
@@ -1845,47 +1839,44 @@ function suggestionCard(c, i, isBan, isYours) {
       return tot >= MIN_GAMES_WEAK ? {b: ep, mu: matchupStrength(ep, c.name, ms)} : null;
     }).filter(Boolean).sort((a,b) => b.mu - a.mu)[0];
     if (worst && worst.mu > 0.57) {
-      worstNote = `<div style="margin-top:4px;font-family:var(--mono);font-size:.62rem;color:var(--red)">⚠ Countered by ${worst.b} (${(worst.mu*100).toFixed(0)}%)</div>`;
+      warn = `<span style="font-family:var(--mono);font-size:.58rem;color:var(--red);margin-left:6px">⚠${worst.b}</span>`;
     }
   }
 
-  const wrPct  = (wr * 100).toFixed(1);
-  const ctrPct = ctr !== null ? (ctr * 100).toFixed(1) : null;
-  const safPct = saf !== null ? (saf * 100).toFixed(1) : null;
+  const wrPct    = (wr * 100).toFixed(1);
+  const ctrPct   = ctr !== null ? (ctr * 100).toFixed(1) : null;
+  const safPct   = saf !== null ? (saf * 100).toFixed(1) : null;
   const scorePct = (c.score * 100).toFixed(1);
-  const cols = ctrPct && safPct ? '1fr 1fr 1fr' : ctrPct ? '1fr 1fr' : '1fr';
 
-  return `<div class="suggestion-card" data-name="${c.name}" style="cursor:${isYours?'pointer':'default'};border-left-color:${color};padding:10px 14px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span style="font-family:var(--mono);font-size:.65rem;color:var(--text3);min-width:16px">${i+1}</span>
-      <span style="font-family:var(--display);font-weight:800;font-size:1.1rem;letter-spacing:.5px;flex:1">${c.name}</span>
-      ${tier ? `<span class="bc-tier tier-${tier}" style="font-size:.72rem">${tier}</span>` : ''}
-      <span style="font-family:var(--mono);font-size:.85rem;font-weight:700;color:${color}">${scorePct}</span>
-    </div>
-    <div style="display:grid;grid-template-columns:${cols};gap:4px 10px">
-      <div>
-        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">WIN RATE</div>
-        <div style="display:flex;align-items:center;gap:5px">
-          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${wrPct}%;height:100%;background:${wrColor(wr)};border-radius:3px"></div></div>
-          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(wr)}">${wrPct}%</span>
-        </div>
+  return `<div class="suggestion-card" data-name="${c.name}" style="
+    cursor:${isYours?'pointer':'default'};
+    border-left:3px solid ${color};
+    padding:7px 12px;
+    display:flex;align-items:center;gap:10px;
+    border-radius:4px;
+    background:var(--bg2);
+    border-top:none;border-right:none;border-bottom:none;
+    margin-bottom:3px;
+    min-height:0;
+  ">
+    <span style="font-family:var(--mono);font-size:.62rem;color:var(--text3);width:16px;text-align:right;flex-shrink:0">${i+1}</span>
+    <span style="font-family:var(--display);font-weight:800;font-size:.95rem;letter-spacing:.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}${warn}</span>
+    ${tier ? `<span class="bc-tier tier-${tier}" style="font-size:.65rem;flex-shrink:0">${tier}</span>` : ''}
+    <div style="display:flex;gap:8px;flex-shrink:0;align-items:center">
+      <div style="display:flex;align-items:center;gap:3px">
+        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">WR</span>
+        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(wr)}">${wrPct}%</span>
       </div>
-      ${ctrPct ? `<div>
-        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">VS ENEMY</div>
-        <div style="display:flex;align-items:center;gap:5px">
-          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${ctrPct}%;height:100%;background:${wrColor(ctr)};border-radius:3px"></div></div>
-          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(ctr)}">${ctrPct}%</span>
-        </div>
+      ${ctrPct ? `<div style="display:flex;align-items:center;gap:3px">
+        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">CTR</span>
+        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(ctr)}">${ctrPct}%</span>
       </div>` : ''}
-      ${safPct ? `<div>
-        <div style="font-family:var(--mono);font-size:.58rem;color:var(--text3);margin-bottom:2px">SAFETY</div>
-        <div style="display:flex;align-items:center;gap:5px">
-          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="width:${safPct}%;height:100%;background:${wrColor(saf)};border-radius:3px"></div></div>
-          <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(saf)}">${safPct}%</span>
-        </div>
+      ${safPct ? `<div style="display:flex;align-items:center;gap:3px">
+        <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">SAF</span>
+        <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${wrColor(saf)}">${safPct}%</span>
       </div>` : ''}
+      <span style="font-family:var(--mono);font-size:.72rem;font-weight:700;color:${color};min-width:32px;text-align:right">${scorePct}</span>
     </div>
-    ${worstNote}
   </div>`;
 }
 
@@ -2109,7 +2100,7 @@ function renderStats() {
   }
 
   // Top pick rate (top 12)
-  const topPicks = sorted.slice(0, 12);
+  const topPicks = sorted.slice(0, 120);
   const maxP = topPicks[0][1].picks;
   document.getElementById('pick-list').innerHTML = topPicks.map(([n,s]) => {
     const pp = (s.picks / totalPicks * 100).toFixed(1) + '%';
@@ -2136,7 +2127,7 @@ function renderStats() {
   }).join('');
 
   // Least picked
-  const leastPicks = [...sorted].reverse().slice(0, 12);
+  const leastPicks = [...sorted].reverse().slice(0, 120);
   const maxLP = leastPicks[leastPicks.length-1][1].picks;
   document.getElementById('lowpick-list').innerHTML = leastPicks.map(([n,s]) => {
     const pp = (s.picks / totalPicks * 100).toFixed(2) + '%';
