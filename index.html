@@ -878,7 +878,15 @@ function getMatchupStats(ctxKey) {
   const parts = ctxKey.split('|');
   const mode = parts[0];
   const map  = parts.slice(1).join('|');
-  return getCtxData(mode, map).ms || {};
+  const ms = getCtxData(mode, map).ms || {};
+  // If no matchups (e.g. overall has none), try to find from any loaded mode
+  if (Object.keys(ms).length === 0 && mode === 'all') {
+    for (const modeData of Object.values(MODE_CACHE)) {
+      const fallback = (modeData['all'] || {}).ms || {};
+      if (Object.keys(fallback).length > 0) return fallback;
+    }
+  }
+  return ms;
 }
 
 function allBrawlers() {
