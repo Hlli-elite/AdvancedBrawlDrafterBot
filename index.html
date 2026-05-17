@@ -168,6 +168,9 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
     <button class="nav-tab" data-tab="matchup">Matchups</button>
     <button class="nav-tab" data-tab="stats">Stats</button>
     <button class="nav-tab" data-tab="overrides">Overrides</button>
+    <button class="nav-tab" data-tab="tiermap">Map Tiers</button>
+    <button class="nav-tab" data-tab="synergy">Synergy</button>
+    <button class="nav-tab" data-tab="comp">Comp Builder</button>
   </nav>
   <main>
     <!-- LOADING -->
@@ -337,6 +340,67 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
         </div>
       </div>
     </div>
+    <!-- MAP TIER LIST -->
+    <div id="tab-tiermap" class="tab-content">
+      <div class="ctx-bar">
+        <span class="ctx-label">Mode</span>
+        <select class="ctx-select" id="tm-mode"><option value="all|all">All Modes</option></select>
+        <span class="ctx-label">Map</span>
+        <select class="ctx-select" id="tm-map"><option value="">All Maps</option></select>
+        <span class="ctx-label" style="margin-left:16px">Min picks:</span>
+        <input class="tbl-search" id="tm-min" type="number" value="50" min="1" style="width:65px">
+        <button class="tier-btn" id="tm-apply" style="margin-left:4px">Refresh</button>
+      </div>
+      <div style="padding:16px 20px;flex:1;overflow-y:auto" id="tm-content">
+        <div class="no-picks">Select a mode and map to see the tier list</div>
+      </div>
+    </div>
+
+    <!-- SYNERGY MATRIX -->
+    <div id="tab-synergy" class="tab-content">
+      <div class="ctx-bar">
+        <span class="ctx-label">Mode</span>
+        <select class="ctx-select" id="syn-mode"><option value="all|all">All Modes</option></select>
+        <span class="ctx-label">Map</span>
+        <select class="ctx-select" id="syn-map"><option value="">All Maps</option></select>
+      </div>
+      <div style="padding:12px 20px;flex:1;display:flex;flex-direction:column;overflow:hidden;gap:10px">
+        <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;flex-wrap:wrap">
+          <span class="ctx-label">Search row:</span>
+          <input class="tbl-search" id="syn-search" placeholder="e.g. EDGAR" style="width:130px">
+          <span class="ctx-label">Min games:</span>
+          <input class="tbl-search" id="syn-min" type="number" value="20" min="1" style="width:65px">
+          <button class="tier-btn" id="syn-apply">Apply</button>
+          <span style="margin-left:auto;font-family:var(--mono);font-size:.68rem;color:var(--text3)">Win rate when row + column are on the same team</span>
+        </div>
+        <div class="mu-wrap"><table id="syn-table"></table></div>
+      </div>
+    </div>
+
+    <!-- COMP BUILDER -->
+    <div id="tab-comp" class="tab-content">
+      <div class="ctx-bar">
+        <span class="ctx-label">Mode</span>
+        <select class="ctx-select" id="comp-mode"><option value="all|all">All Modes</option></select>
+        <span class="ctx-label">Map</span>
+        <select class="ctx-select" id="comp-map"><option value="">All Maps</option></select>
+      </div>
+      <div style="padding:16px 20px;flex:1;overflow-y:auto">
+        <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <div style="font-family:var(--mono);font-size:.68rem;color:var(--text3);margin-bottom:6px">BRAWLER 1 (required)</div>
+            <select class="ctx-select" id="comp-b1" style="width:180px"><option value="">Select brawler</option></select>
+          </div>
+          <div>
+            <div style="font-family:var(--mono);font-size:.68rem;color:var(--text3);margin-bottom:6px">BRAWLER 2 (optional)</div>
+            <select class="ctx-select" id="comp-b2" style="width:180px"><option value="">Any</option></select>
+          </div>
+          <button class="tier-btn primary" id="comp-go">Find Best Comps</button>
+        </div>
+        <div id="comp-results"><div class="no-picks">Select a brawler and click Find Best Comps</div></div>
+      </div>
+    </div>
+
   </main>
 </div>
 <script>
@@ -392,7 +456,7 @@ async function loadData() {
 }
 
 function decodeCtx(raw) {
-  if (!raw || !META) return { bs: {}, ms: {} };
+  if (!raw || !META) return { bs: {}, ms: {}, pairs: {} };
   const names = META.brawlers;
   const bs = {};
   for (const [id, arr] of Object.entries(raw.bs || {})) {
@@ -409,7 +473,18 @@ function decodeCtx(raw) {
       if (bn) ms[an][bn] = { wins: arr[0], losses: arr[1] };
     }
   }
-  return { bs, ms };
+  // Decode pair stats: "id|id" -> [picks, wins]
+  const pairs = {};
+  for (const [key, arr] of Object.entries(raw.pairs || {})) {
+    const [aid, bid] = key.split('|');
+    const an = names[aid], bn = names[bid];
+    if (!an || !bn) continue;
+    pairs[an] = pairs[an] || {};
+    pairs[an][bn] = { picks: arr[0], wins: arr[1], losses: arr[0] - arr[1] };
+    pairs[bn] = pairs[bn] || {};
+    pairs[bn][an] = { picks: arr[0], wins: arr[1], losses: arr[0] - arr[1] };
+  }
+  return { bs, ms, pairs };
 }
 
 async function loadModeData(mode) {
@@ -448,6 +523,9 @@ function onDataLoaded() {
   initMatchup();
   initStats();
   initOverrides();
+  initMapTierList();
+  initSynergy();
+  initCompBuilder();
 
   document.getElementById('tab-loading').classList.remove('active');
   document.getElementById('tab-loading').style.display = 'none';
@@ -481,6 +559,7 @@ function getMuMap()     { return document.getElementById('mu-map').value || ''; 
 function getStatsMode() { return document.getElementById('stats-mode').value.split('|')[0]; }
 function getStatsMap()  { return document.getElementById('stats-map').value || ''; }
 function allBrawlers()  { return META ? [...META.brawlers].sort() : []; }
+function getPairStats(mode, map) { return getCtxData(mode, map).pairs || {}; }
 function allTaken()     { return new Set([...draftAllies, ...draftEnemies, ...draftAllyBans, ...draftEnemyBans]); }
 
 function wrColor(wr) {
@@ -497,7 +576,7 @@ function fmtMode(m) {
 
 function populateModeSelects() {
   const modes = META.modes || [];
-  ['draft','mu','stats'].forEach(function(pfx) {
+  ['draft','mu','stats','tm','syn','comp'].forEach(function(pfx) {
     const modeEl = document.getElementById(pfx + '-mode');
     const mapEl  = document.getElementById(pfx + '-map');
     if (!modeEl || !mapEl) return;
@@ -1237,6 +1316,261 @@ function calcWinChance() {
   pct.style.color = color;
 }
 
+
+// MAP TIER LIST
+function initMapTierList() {
+  document.getElementById('tm-apply').addEventListener('click', renderMapTierList);
+  document.getElementById('tm-mode').addEventListener('change', async function() {
+    const mode = this.value.split('|')[0];
+    if (mode !== 'all') await loadModeData(mode);
+    const mapEl = document.getElementById('tm-map');
+    mapEl.innerHTML = '<option value="">All Maps</option>';
+    const allM = (META.maps && META.maps[mode]) || [];
+    const actM = ACTIVE_MAPS[mode] || null;
+    const maps = actM ? allM.filter(function(x){return actM.includes(x);}) : allM;
+    maps.forEach(function(m){const o=document.createElement('option');o.value=m;o.textContent=m;mapEl.appendChild(o);});
+    renderMapTierList();
+  });
+  document.getElementById('tm-map').addEventListener('change', renderMapTierList);
+}
+
+function renderMapTierList() {
+  const mode   = document.getElementById('tm-mode').value.split('|')[0];
+  const map    = document.getElementById('tm-map').value || '';
+  const minP   = parseInt(document.getElementById('tm-min').value) || 50;
+  const bs     = getBrawlerStats(mode, map);
+  const el     = document.getElementById('tm-content');
+
+  if (!Object.keys(bs).length) {
+    el.innerHTML = '<div class="no-picks">No data. Select a mode first.</div>';
+    return;
+  }
+
+  const totalPicks = Object.values(bs).reduce(function(a,s){return a+s.picks;},0);
+  const eligible   = Object.entries(bs).filter(function(e){return e[1].picks >= minP;});
+  if (!eligible.length) {
+    el.innerHTML = '<div class="no-picks">Not enough data with min ' + minP + ' picks. Try lowering the threshold.</div>';
+    return;
+  }
+
+  // Score each brawler with Bayesian WR + pick rate bonus
+  const scored = eligible.map(function(e) {
+    const name = e[0], s = e[1];
+    const bwr = bayesWR(s.wins, s.losses);
+    const pickPct = s.picks / totalPicks;
+    return { name, bwr, picks: s.picks, pickPct };
+  }).sort(function(a,b){return b.bwr - a.bwr;});
+
+  // Assign tiers based on percentile
+  const n = scored.length;
+  function getTier(i) {
+    const pct = i / n;
+    if (pct < 0.08) return 'S';
+    if (pct < 0.22) return 'A';
+    if (pct < 0.45) return 'B';
+    if (pct < 0.68) return 'C';
+    if (pct < 0.85) return 'D';
+    return 'F';
+  }
+
+  const tierGroups = {S:[],A:[],B:[],C:[],D:[],F:[]};
+  scored.forEach(function(b, i) { tierGroups[getTier(i)].push(b); });
+
+  const TIER_COLORS = {S:'#ff6b6b',A:'#ffa94d',B:'#ffd43b',C:'#69db7c',D:'#74c0fc',F:'#8892b0'};
+  const TIER_BG     = {S:'#3a1a1a',A:'#2d1f0e',B:'#2d2a0e',C:'#0e2d18',D:'#0e1f3a',F:'#111520'};
+
+  el.innerHTML = '<div style="margin-bottom:10px;font-family:var(--mono);font-size:.7rem;color:var(--text3)">'
+    + (map ? map : fmtMode(mode) + ' -- All Maps') + ' | min ' + minP + ' picks | ' + eligible.length + ' brawlers</div>'
+    + ['S','A','B','C','D','F'].map(function(tier) {
+      const brawlers = tierGroups[tier];
+      if (!brawlers.length) return '';
+      return '<div style="display:flex;gap:0;margin-bottom:5px;border:1px solid var(--border);border-radius:6px;overflow:hidden;min-height:52px">'
+        + '<div style="width:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:1.4rem;font-weight:800;background:'+TIER_BG[tier]+';color:'+TIER_COLORS[tier]+'">' + tier + '</div>'
+        + '<div style="flex:1;display:flex;flex-wrap:wrap;gap:4px;padding:6px;background:'+TIER_BG[tier]+'18;border-left:1px solid var(--border)">'
+        + brawlers.map(function(b) {
+          const wr = (b.bwr*100).toFixed(1);
+          const pp = (b.pickPct*100).toFixed(1);
+          return '<div style="display:flex;align-items:center;gap:5px;border:1px solid var(--border2);border-radius:4px;padding:3px 8px;background:var(--bg3);cursor:default" title="WR: '+wr+'% | Pick rate: '+pp+'% | '+b.picks+' picks">'
+            + '<span style="font-family:var(--display);font-weight:700;font-size:.82rem">' + b.name + '</span>'
+            + '<span style="font-family:var(--mono);font-size:.62rem;color:'+wrColor(b.bwr)+'">' + wr + '%</span>'
+            + '</div>';
+        }).join('')
+        + '</div></div>';
+    }).join('');
+}
+
+// SYNERGY MATRIX
+function initSynergy() {
+  renderSynergy();
+  document.getElementById('syn-apply').addEventListener('click', renderSynergy);
+  document.getElementById('syn-search').addEventListener('keydown', function(e){if(e.key==='Enter')renderSynergy();});
+  document.getElementById('syn-mode').addEventListener('change', async function() {
+    const mode = this.value.split('|')[0];
+    if (mode !== 'all') await loadModeData(mode);
+    const mapEl = document.getElementById('syn-map');
+    mapEl.innerHTML = '<option value="">All Maps</option>';
+    const allM = (META.maps && META.maps[mode]) || [];
+    const actM = ACTIVE_MAPS[mode] || null;
+    const maps = actM ? allM.filter(function(x){return actM.includes(x);}) : allM;
+    maps.forEach(function(m){const o=document.createElement('option');o.value=m;o.textContent=m;mapEl.appendChild(o);});
+    renderSynergy();
+  });
+  document.getElementById('syn-map').addEventListener('change', renderSynergy);
+}
+
+function renderSynergy() {
+  const mode   = document.getElementById('syn-mode').value.split('|')[0];
+  const map    = document.getElementById('syn-map').value || '';
+  const minG   = parseInt(document.getElementById('syn-min').value) || 20;
+  const search = document.getElementById('syn-search').value.toUpperCase().trim();
+  const pairs  = getPairStats(mode, map);
+  const table  = document.getElementById('syn-table');
+
+  const allB = new Set();
+  Object.keys(pairs).forEach(function(a){allB.add(a);Object.keys(pairs[a]).forEach(function(b){allB.add(b);});});
+  const cols = [...allB].sort();
+  let rows = [...allB].sort();
+  if (search) rows = rows.filter(function(b){return b.includes(search);});
+
+  if (!rows.length) {
+    table.innerHTML = '<tr><td style="padding:20px;color:var(--text3);font-family:var(--mono)">No synergy data. Select a mode first.</td></tr>';
+    return;
+  }
+
+  let html = '<thead><tr><th>+ ally</th>';
+  cols.forEach(function(c){html+='<th title="'+c+'">'+(c.length>8?c.slice(0,8)+'...':c)+'</th>';});
+  html += '</tr></thead><tbody>';
+  rows.forEach(function(row) {
+    html += '<tr><th>' + row + '</th>';
+    cols.forEach(function(col) {
+      if (row === col) {html+='<td class="self">-</td>';return;}
+      const rec = pairs[row] && pairs[row][col] ? pairs[row][col] : null;
+      const tot = rec ? rec.wins + rec.losses : 0;
+      if (!rec || tot < minG) {html+='<td class="nd" title="'+tot+' games">.</td>';return;}
+      const wr = rec.wins / tot;
+      const pct = Math.round(wr * 100);
+      const t = Math.max(0, Math.min(1, (wr - 0.35) / 0.30));
+      const rr = Math.round(239+(34-239)*t), gg = Math.round(68+(197-68)*t), bb = Math.round(68+(94-68)*t);
+      const bg = 'rgba('+rr+','+gg+','+bb+','+(0.1+Math.abs(wr-.5)*0.9)+')';
+      const fc = wr>=.55?'var(--green)':wr<=.45?'var(--red)':'var(--text)';
+      html += '<td style="background:'+bg+';color:'+fc+'" title="'+row+' + '+col+': '+rec.wins+'W '+rec.losses+'L ('+tot+')">'+pct+'%</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+// COMP BUILDER
+function initCompBuilder() {
+  const brawlers = allBrawlers();
+  ['comp-b1','comp-b2'].forEach(function(id) {
+    const el = document.getElementById(id);
+    const isB2 = id === 'comp-b2';
+    el.innerHTML = (isB2 ? '<option value="">Any (find best)</option>' : '<option value="">Select brawler</option>')
+      + brawlers.map(function(b){return '<option value="'+b+'">'+b+'</option>';}).join('');
+  });
+  document.getElementById('comp-go').addEventListener('click', runCompBuilder);
+  document.getElementById('comp-mode').addEventListener('change', async function() {
+    const mode = this.value.split('|')[0];
+    if (mode !== 'all') await loadModeData(mode);
+    const mapEl = document.getElementById('comp-map');
+    mapEl.innerHTML = '<option value="">All Maps</option>';
+    const allM = (META.maps && META.maps[mode]) || [];
+    const actM = ACTIVE_MAPS[mode] || null;
+    const maps = actM ? allM.filter(function(x){return actM.includes(x);}) : allM;
+    maps.forEach(function(m){const o=document.createElement('option');o.value=m;o.textContent=m;mapEl.appendChild(o);});
+  });
+}
+
+function runCompBuilder() {
+  const b1   = document.getElementById('comp-b1').value;
+  const b2   = document.getElementById('comp-b2').value;
+  const mode = document.getElementById('comp-mode').value.split('|')[0];
+  const map  = document.getElementById('comp-map').value || '';
+  const el   = document.getElementById('comp-results');
+
+  if (!b1) { el.innerHTML = '<div class="no-picks">Select at least one brawler.</div>'; return; }
+
+  const bs    = getBrawlerStats(mode, map);
+  const pairs = getPairStats(mode, map);
+  const fixed = b2 ? [b1, b2] : [b1];
+  const pool  = allBrawlers().filter(function(b){return !fixed.includes(b);});
+
+  if (!Object.keys(pairs).length) {
+    el.innerHTML = '<div class="no-picks">No pair data available. Run the tracker and upload new data files.</div>';
+    return;
+  }
+
+  // Score each possible 3rd (or 2nd+3rd) pick
+  let candidates = [];
+  if (fixed.length === 2) {
+    // Find best 3rd pick
+    pool.forEach(function(b3) {
+      const p12 = getPairWR(b1, b2, pairs);
+      const p13 = getPairWR(b1, b3, pairs);
+      const p23 = getPairWR(b2, b3, pairs);
+      const validPairs = [p12,p13,p23].filter(function(x){return x!==null;});
+      if (!validPairs.length) return;
+      const synergy = validPairs.reduce(function(a,b){return a+b;},0) / validPairs.length;
+      const baseWR = (rawWR(b1,bs) + rawWR(b2,bs) + rawWR(b3,bs)) / 3;
+      candidates.push({ comp:[b1,b2,b3], score: 0.6*synergy + 0.4*baseWR, synergy, baseWR });
+    });
+  } else {
+    // Find best 2nd + 3rd picks
+    for (let i=0; i<pool.length; i++) {
+      for (let j=i+1; j<pool.length; j++) {
+        const b2c = pool[i], b3c = pool[j];
+        const p12 = getPairWR(b1, b2c, pairs);
+        const p13 = getPairWR(b1, b3c, pairs);
+        const p23 = getPairWR(b2c, b3c, pairs);
+        const validPairs = [p12,p13,p23].filter(function(x){return x!==null;});
+        if (validPairs.length < 2) continue;
+        const synergy = validPairs.reduce(function(a,b){return a+b;},0) / validPairs.length;
+        const baseWR = (rawWR(b1,bs) + rawWR(b2c,bs) + rawWR(b3c,bs)) / 3;
+        candidates.push({ comp:[b1,b2c,b3c], score: 0.6*synergy + 0.4*baseWR, synergy, baseWR });
+      }
+    }
+  }
+
+  candidates.sort(function(a,b){return b.score-a.score;});
+  candidates = candidates.slice(0, 20);
+
+  if (!candidates.length) {
+    el.innerHTML = '<div class="no-picks">Not enough pair data to build comps. Try All Modes or run the tracker again.</div>';
+    return;
+  }
+
+  el.innerHTML = '<div style="display:flex;flex-direction:column;gap:8px">'
+    + candidates.map(function(c, i) {
+      const synPct  = (c.synergy * 100).toFixed(1);
+      const wrPct   = (c.baseWR  * 100).toFixed(1);
+      const scorePct= (c.score   * 100).toFixed(1);
+      const synCol  = wrColor(c.synergy);
+      const wrCol   = wrColor(c.baseWR);
+      return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:12px">'
+        + '<span style="font-family:var(--mono);font-size:.68rem;color:var(--text3);min-width:20px">#'+(i+1)+'</span>'
+        + '<div style="flex:1;display:flex;gap:8px;flex-wrap:wrap">'
+        + c.comp.map(function(b,bi) {
+          const isFix = fixed.includes(b);
+          return '<span style="font-family:var(--display);font-weight:800;font-size:1rem;color:'+(isFix?'var(--amber)':'var(--text)')+';'+(isFix?'text-decoration:underline;':'')+'">' + b + '</span>';
+        }).join('<span style="color:var(--text3);font-family:var(--mono)">+</span>')
+        + '</div>'
+        + '<div style="display:flex;gap:12px;flex-shrink:0">'
+        + '<div style="text-align:center"><div style="font-family:var(--mono);font-size:.55rem;color:var(--text3)">SYNERGY</div><div style="font-family:var(--mono);font-size:.78rem;font-weight:700;color:'+synCol+'">'+synPct+'%</div></div>'
+        + '<div style="text-align:center"><div style="font-family:var(--mono);font-size:.55rem;color:var(--text3)">AVG WR</div><div style="font-family:var(--mono);font-size:.78rem;font-weight:700;color:'+wrCol+'">'+wrPct+'%</div></div>'
+        + '<div style="text-align:center"><div style="font-family:var(--mono);font-size:.55rem;color:var(--text3)">SCORE</div><div style="font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--amber)">'+scorePct+'</div></div>'
+        + '</div></div>';
+    }).join('')
+    + '</div>';
+}
+
+function getPairWR(a, b, pairs) {
+  const rec = (pairs[a] && pairs[a][b]) || (pairs[b] && pairs[b][a]);
+  if (!rec || rec.picks < 20) return null;
+  return rec.wins / rec.picks;
+}
+
 // TABS
 document.querySelectorAll('.nav-tab').forEach(function(tab) {
   tab.addEventListener('click', function() {
@@ -1250,6 +1584,8 @@ document.querySelectorAll('.nav-tab').forEach(function(tab) {
       if (tab.dataset.tab==='stats')     renderStats();
       if (tab.dataset.tab==='matchup')   renderMatchup();
       if (tab.dataset.tab==='overrides') renderOverridesTab();
+      if (tab.dataset.tab==='tiermap')   renderMapTierList();
+      if (tab.dataset.tab==='synergy')   renderSynergy();
     }
   });
 });
