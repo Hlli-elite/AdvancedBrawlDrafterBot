@@ -101,7 +101,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 .brawler-card.as-ally{border-color:var(--blue);background:var(--blue-dim)}
 .brawler-card.as-enemy{border-color:var(--red);background:var(--red-dim)}
 .brawler-card.unavailable{opacity:.25;pointer-events:none}
-.bc-name{font-family:var(--display);font-size:.6rem;font-weight:700;letter-spacing:.3px;text-align:center;line-height:1.1;color:var(--text)}
+.bc-img{width:80%;height:52px;object-fit:contain;flex-shrink:0}.bc-name{font-family:var(--display);font-size:.6rem;font-weight:700;letter-spacing:.3px;text-align:center;line-height:1.1;color:var(--text)}
 .bc-wr{font-family:var(--mono);font-size:.55rem;color:var(--text3)}
 .bc-tier{position:absolute;top:2px;right:3px;font-family:var(--mono);font-size:.55rem;font-weight:700}
 .tier-S{color:#ff6b6b}.tier-A{color:#ffa94d}.tier-B{color:#ffd43b}.tier-C{color:#69db7c}.tier-D{color:#74c0fc}.tier-F{color:#8892b0}
@@ -786,7 +786,7 @@ function renderBrawlerGrid() {
     const imgUrl = 'https://cdn.brawlify.com/brawler-bs/' + imgName + '.png';
     return '<div class="brawler-card ' + cls + '" data-name="' + b + '" title="' + b + '">'
       + (tier ? '<div class="bc-tier tier-' + tier + '">' + tier + '</div>' : '')
-      + '<img src="' + imgUrl + '" alt="' + b + '" style="width:80%;height:60%;object-fit:contain;flex-shrink:0" onerror="this.style.display='none'">'
+      + '<img src="' + imgUrl + '" alt="' + b + '" class="bc-img">'
       + '<div class="bc-name">' + b + '</div>'
       + '<div class="bc-wr" style="color:' + wrColor(wr) + '">' + (wr!==null?(wr*100).toFixed(1)+'%':'-') + '</div>'
       + '</div>';
@@ -1187,7 +1187,15 @@ document.querySelectorAll('.nav-tab').forEach(function(tab) {
   });
 });
 
-document.addEventListener('DOMContentLoaded', function() { loadData(); });
+document.addEventListener('DOMContentLoaded', function() {
+  // Hide broken brawler images gracefully
+  document.addEventListener('error', function(e) {
+    if (e.target.classList && e.target.classList.contains('bc-img')) {
+      e.target.style.display = 'none';
+    }
+  }, true);
+  loadData();
+});
 </script>
 </body>
 </html>
