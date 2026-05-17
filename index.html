@@ -213,6 +213,13 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
         <div class="draft-center">
           <div class="suggestions-header">
             <div class="suggestions-title" id="suggestions-title">Suggestions</div>
+            <div id="win-meter" style="display:none;align-items:center;gap:6px">
+              <span style="font-family:var(--mono);font-size:.58rem;color:var(--text3)">WIN</span>
+              <div style="width:90px;height:8px;background:var(--bg);border-radius:4px;overflow:hidden;border:1px solid var(--border2)">
+                <div id="win-meter-fill" style="height:100%;width:50%;background:var(--amber);border-radius:4px;transition:width .4s,background .4s"></div>
+              </div>
+              <span id="win-meter-pct" style="font-family:var(--mono);font-size:.78rem;font-weight:700;color:var(--amber);min-width:34px">50%</span>
+            </div>
             <span style="font-family:var(--mono);font-size:.62rem;color:var(--text3)">Click to place</span>
           </div>
           <div class="suggestions-list" id="suggestions-list">
@@ -711,6 +718,7 @@ function renderDraft() {
   renderSlots('enemy-slots',    draftEnemies,  'enemy-pick');
   renderBrawlerGrid();
   renderSuggestions();
+  calcWinChance();
 }
 
 function renderSlots(id, pool, cls) {
@@ -1169,6 +1177,65 @@ function renderMuList(){
     }).join('');
 }
 function removeMu(key){delete OVERRIDES.matchups[key];saveOverrides();renderMuList();invalidateCache();}
+
+// WIN CHANCE METER
+function calcWinChance() {
+  const meter = document.getElementById('win-meter');
+  const fill  = document.getElementById('win-meter-fill');
+  const pct   = document.getElementById('win-meter-pct');
+
+  // Need at least 1 ally and 1 enemy pick to show meter
+  if (draftAllies.length === 0 || draftEnemies.length === 0) {
+    meter.style.display = 'none';
+    return;
+  }
+
+  const mode = getDraftMode(), map = getDraftMap();
+  const bs = getBrawlerStats(mode, map);
+  const ms = getMatchupStats(mode, map);
+
+  // Win chance = average of:
+  // 1. Our team's average WR on this map
+  // 2. Our counter score vs each enemy pick (weighted by confidence)
+  // 3. Our safety score vs enemy picks
+  // Normalised to 0-100%
+
+  const ourWRs = draftAllies.map(function(b) { return rawWR(b, bs); });
+  const avgOurWR = ourWRs.reduce(function(a,b){return a+b;},0) / ourWRs.length;
+
+  const enemyWRs = draftEnemies.map(function(b) { return rawWR(b, bs); });
+  const avgEnemyWR = enemyWRs.reduce(function(a,b){return a+b;},0) / enemyWRs.length;
+
+  // Average matchup score for each of our picks vs each of their picks
+  let matchupSum = 0, matchupCount = 0;
+  draftAllies.forEach(function(ally) {
+    draftEnemies.forEach(function(enemy) {
+      const str = matchupStr(ally, enemy, ms);
+      const rec = ms[ally] && ms[ally][enemy];
+      const conf = rec ? matchupConf(rec.wins, rec.losses) : 0.1;
+      matchupSum += str * conf;
+      matchupCount += conf;
+    });
+  });
+  const avgMatchup = matchupCount > 0 ? matchupSum / matchupCount : 0.5;
+
+  // Relative WR advantage: how much better is our team than enemy team on this map
+  const wrAdvantage = 0.5 + (avgOurWR - avgEnemyWR);
+
+  // Final estimate: weighted blend
+  const W_MATCHUP = 0.55; // matchup data is most direct signal
+  const W_WR_ADV  = 0.30; // map WR advantage
+  const W_BASE    = 0.15; // prior (50/50)
+  const winEst = W_MATCHUP * avgMatchup + W_WR_ADV * Math.max(0, Math.min(1, wrAdvantage)) + W_BASE * 0.5;
+  const winPct = Math.round(Math.max(20, Math.min(80, winEst * 100))); // clamp 20-80%
+
+  const color = winPct >= 55 ? 'var(--green)' : winPct <= 45 ? 'var(--red)' : 'var(--amber)';
+  meter.style.display = 'flex';
+  fill.style.width = winPct + '%';
+  fill.style.background = color;
+  pct.textContent = winPct + '%';
+  pct.style.color = color;
+}
 
 // TABS
 document.querySelectorAll('.nav-tab').forEach(function(tab) {
