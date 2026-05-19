@@ -1669,23 +1669,24 @@ function updateNNStatus(loaded) {
 
 function buildNNInput(team1Names, team2Names, mode, map) {
   if (!NN_META) return null;
-  const { brawlers, modes, maps, nb, nm, nmp } = NN_META;
+  const { brawlers, modes, maps, mode_maps, nb, nm, nmp, nmm } = NN_META;
   const bi  = Object.fromEntries(brawlers.map((b,i) => [b,i]));
-  const mi  = Object.fromEntries(modes.map((m,i) => [m,i]));
-  const mpi = Object.fromEntries(maps.map((m,i)  => [m,i]));
+  const mi  = Object.fromEntries(modes.map((m,i)   => [m,i]));
+  const mpi = Object.fromEntries(maps.map((m,i)    => [m,i]));
+  const mmi = Object.fromEntries((mode_maps||[]).map((m,i) => [m,i]));
 
-  const dim = nb*2 + nm + nmp + 1;
+  // dim = nb*2 + nm + nmp + nmm + 2 (duration + trophy)
+  const NMM = nmm || 0;
+  const dim = nb*2 + nm + nmp + NMM + 2;
   const arr = new Float32Array(dim);
 
   // Team 1 one-hot
   team1Names.forEach(function(b) {
-    const i = bi[b];
-    if (i !== undefined) arr[i] = 1.0;
+    const i = bi[b]; if (i !== undefined) arr[i] = 1.0;
   });
-  // Team 2 one-hot (offset by nb)
+  // Team 2 one-hot
   team2Names.forEach(function(b) {
-    const i = bi[b];
-    if (i !== undefined) arr[nb + i] = 1.0;
+    const i = bi[b]; if (i !== undefined) arr[nb + i] = 1.0;
   });
   // Mode one-hot
   const mi_val = mi[mode];
@@ -1693,8 +1694,14 @@ function buildNNInput(team1Names, team2Names, mode, map) {
   // Map one-hot
   const mpi_val = mpi[map];
   if (mpi_val !== undefined) arr[nb*2 + nm + mpi_val] = 1.0;
-  // Duration (default 0.5 = medium game)
-  arr[nb*2 + nm + nmp] = 0.5;
+  // Mode+Map combined one-hot
+  const mm_key = mode + '|' + map;
+  const mmi_val = mmi[mm_key];
+  if (mmi_val !== undefined) arr[nb*2 + nm + nmp + mmi_val] = 1.0;
+  // Duration (default 0.5 = medium)
+  arr[nb*2 + nm + nmp + NMM]     = 0.5;
+  // Trophy norm (default 0.5 = mid-rank)
+  arr[nb*2 + nm + nmp + NMM + 1] = 0.5;
 
   return arr;
 }
