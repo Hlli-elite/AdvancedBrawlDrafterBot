@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <base href="/AdvancedBrawlDrafterBot/">
 <title>BrawlDraft</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Barlow+Condensed:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -406,6 +407,12 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column}
 <script>
 // STATE
 let META = null;
+
+// Neural network model state
+let NN_MODEL    = null;   // loaded ONNX session
+let NN_META     = null;   // model_meta.json (brawler/mode/map vocab)
+let NN_LOADING  = false;
+let NN_ENABLED  = false;  // true once model is loaded successfully
 let OVERALL = null;
 let MODE_CACHE = {};
 let TIERLIST = {};
@@ -527,6 +534,9 @@ function onDataLoaded() {
   initSynergy();
   initCompBuilder();
 
+  // Try to load neural network model (non-blocking)
+  loadNeuralNet();
+
   document.getElementById('tab-loading').classList.remove('active');
   document.getElementById('tab-loading').style.display = 'none';
   document.getElementById('tab-draft').classList.add('active');
@@ -559,8 +569,318 @@ function getMuMap()     { return document.getElementById('mu-map').value || ''; 
 function getStatsMode() { return document.getElementById('stats-mode').value.split('|')[0]; }
 function getStatsMap()  { return document.getElementById('stats-map').value || ''; }
 function allBrawlers()  { return META ? [...META.brawlers].sort() : []; }
+
+// Convert brawler name to Brawlify CDN format (Title Case)
+// Our data stores names in ALL CAPS from the API
+const BRAWLER_NAME_MAP = {
+  '8-BIT': '8-Bit',
+  'MR. P': 'Mr.P',
+  'LARRY & LAWRIE': 'Larry&Lawrie',
+  'LOU': 'Lou',
+  'ASH': 'Ash',
+  'JANET': 'Janet',
+  'SAM': 'Sam',
+  'LOLA': 'Lola',
+  'RUFFS': 'Ruffs',
+  'BUZZ': 'Buzz',
+  'GROM': 'Grom',
+  'BELLE': 'Belle',
+  'SQUEAK': 'Squeak',
+  'SURGE': 'Surge',
+  'COLETTE': 'Colette',
+  'AMBER': 'Amber',
+  'COLONEL RUFFS': 'Colonel-Ruffs',
+  'EL PRIMO': 'ElPrimo',
+  'JACKY': 'Jacky',
+  'MAX': 'Max',
+  'SPROUT': 'Sprout',
+  'BROCK': 'Brock',
+  'TICK': 'Tick',
+  'GENE': 'Gene',
+  'LEON': 'Leon',
+  'SPIKE': 'Spike',
+  'CROW': 'Crow',
+  'MORTIS': 'Mortis',
+  'TARA': 'Tara',
+  'ROSA': 'Rosa',
+  'BO': 'Bo',
+  'FRANK': 'Frank',
+  'BARLEY': 'Barley',
+  'RICO': 'Rico',
+  'DARRYL': 'Darryl',
+  'PENNY': 'Penny',
+  'CARL': 'Carl',
+  'BIBI': 'Bibi',
+  'BEA': 'Bea',
+  'EMZ': 'Emz',
+  'SANDY': 'Sandy',
+  'NITA': 'Nita',
+  'COLT': 'Colt',
+  'BULL': 'Bull',
+  'JESSIE': 'Jessie',
+  'BROCK': 'Brock',
+  'DYNAMIKE': 'Dynamike',
+  'BOW': 'Bow',
+  'POCO': 'Poco',
+  'ROSA': 'Rosa',
+  'PIPER': 'Piper',
+  'PAM': 'Pam',
+  'FRANK': 'Frank',
+  'MORTIS': 'Mortis',
+  'TARA': 'Tara',
+  'GENE': 'Gene',
+  'MAX': 'Max',
+  'MR. P': 'MrP',
+  'SPROUT': 'Sprout',
+  'BYRON': 'Byron',
+  'SQUEAK': 'Squeak',
+  'GRIFF': 'Griff',
+  'GALE': 'Gale',
+  'NANI': 'Nani',
+  'COLETTE': 'Colette',
+  'BELLE': 'Belle',
+  'BUZZ': 'Buzz',
+  'SHELLY': 'Shelly',
+  'PRIMO': 'ElPrimo',
+  'MANDY': 'Mandy',
+  'MAISIE': 'Maisie',
+  'HANK': 'Hank',
+  'CORDELIUS': 'Cordelius',
+  'CHARLIE': 'Charlie',
+  'MELODIE': 'Melodie',
+  'ANGELO': 'Angelo',
+  'LILY': 'Lily',
+  'BERRY': 'Berry',
+  'CLANCY': 'Clancy',
+  'MICO': 'Mico',
+  'KIT': 'Kit',
+  'DRACO': 'Draco',
+  'KENJI': 'Kenji',
+  'CHUCK': 'Chuck',
+  'CHESTER': 'Chester',
+  'GRAY': 'Gray',
+  'WILLOW': 'Willow',
+  'DOUG': 'Doug',
+  'PEARL': 'Pearl',
+  'LARRY': 'Larry&Lawrie',
+  'LAWRIE': 'Larry&Lawrie',
+  'OTIS': 'Otis',
+  'SAM': 'Sam',
+  'GROM': 'Grom',
+  'BONNIE': 'Bonnie',
+  'FANG': 'Fang',
+  'EVE': 'Eve',
+  'JANET': 'Janet',
+  'GRAY': 'Gray',
+  'R-T': 'R-T',
+  'RT': 'R-T',
+  'ASH': 'Ash',
+  'LOLA': 'Lola',
+  'RUFFS': 'Ruffs',
+  'BUSTER': 'Buster',
+  'CHESTER': 'Chester',
+  'GRAY': 'Gray',
+  'LILY': 'Lily',
+  'SURGE': 'Surge',
+  'AMBER': 'Amber',
+  'MEG': 'Meg',
+  'BUZZ': 'Buzz',
+  'JACKY': 'Jacky',
+  'COLETTE': 'Colette',
+  'LOU': 'Lou',
+  'EDGAR': 'Edgar',
+  'GALE': 'Gale',
+  'NANI': 'Nani',
+  'SPROUT': 'Sprout',
+  'PIPER': 'Piper',
+  'SANDY': 'Sandy',
+  'TICK': 'Tick',
+  'LEON': 'Leon',
+  'DARRYL': 'Darryl',
+  'RICO': 'Rico',
+  'BIBI': 'Bibi',
+  'BEA': 'Bea',
+  'DYNAMIKE': 'Dynamike',
+  'EMZ': 'Emz',
+  'STU': 'Stu',
+  'BELLE': 'Belle',
+  'SQUEAK': 'Squeak',
+  'GRIFF': 'Griff',
+  'GENE': 'Gene',
+  'MAX': 'Max',
+  'PENNY': 'Penny',
+  'FRANK': 'Frank',
+  'NITA': 'Nita',
+  'COLT': 'Colt',
+  'SPIKE': 'Spike',
+  'CROW': 'Crow',
+  'MORTIS': 'Mortis',
+  'TARA': 'Tara',
+  'GENE': 'Gene',
+  'BO': 'Bo',
+  'SHELLY': 'Shelly',
+  'JESSIE': 'Jessie',
+  'BROCK': 'Brock',
+  'BULL': 'Bull',
+  'POCO': 'Poco',
+  'ROSA': 'Rosa',
+  'PAM': 'Pam',
+  'BARLEY': 'Barley',
+  'CARL': 'Carl',
+  'BYRON': 'Byron',
+  'COLETTE': 'Colette',
+  'GROM': 'Grom',
+  'JANET': 'Janet',
+  'BELLE': 'Belle',
+  'BUZZ': 'Buzz',
+  'ASH': 'Ash',
+  'LOLA': 'Lola',
+  'RUFFS': 'Ruffs',
+  'BUSTER': 'Buster',
+  'FANG': 'Fang',
+  'EVE': 'Eve',
+  'R-T': 'R-T',
+  'BONNIE': 'Bonnie',
+  'SAM': 'Sam',
+  'OTIS': 'Otis',
+  'BUSTER': 'Buster',
+  'MANDY': 'Mandy',
+  'MAISIE': 'Maisie',
+  'HANK': 'Hank',
+  'CORDELIUS': 'Cordelius',
+  'CHARLIE': 'Charlie',
+  'MELODIE': 'Melodie',
+  'ANGELO': 'Angelo',
+  'LILY': 'Lily',
+  'BERRY': 'Berry',
+  'CLANCY': 'Clancy',
+  'MICO': 'Mico',
+  'KIT': 'Kit',
+  'DRACO': 'Draco',
+  'KENJI': 'Kenji',
+  'CHUCK': 'Chuck',
+  'WILLOW': 'Willow',
+  'DOUG': 'Doug',
+  'PEARL': 'Pearl',
+  'MEG': 'Meg',
+  'STU': 'Stu',
+  'GALE': 'Gale',
+  'NANI': 'Nani',
+  'EDGAR': 'Edgar',
+  'GRIFF': 'Griff',
+  'PENNY': 'Penny',
+  'PAM': 'Pam',
+  'BARLEY': 'Barley',
+  'CARL': 'Carl',
+  'DARRYL': 'Darryl',
+  'RICO': 'Rico',
+  'BIBI': 'Bibi',
+  'BEA': 'Bea',
+  'EMZ': 'Emz',
+  'SANDY': 'Sandy',
+  'SPIKE': 'Spike',
+  'TARA': 'Tara',
+  'JACKY': 'Jacky',
+  'LOU': 'Lou',
+  'PIPER': 'Piper',
+  'ROSA': 'Rosa',
+  'BO': 'Bo',
+  'FRANK': 'Frank',
+  'MORTIS': 'Mortis',
+  'CROW': 'Crow',
+  'LEON': 'Leon',
+  'TICK': 'Tick',
+  'GENE': 'Gene',
+  'MAX': 'Max',
+  'MR. P': 'MrP',
+  'SPROUT': 'Sprout',
+  'BYRON': 'Byron',
+  'SQUEAK': 'Squeak',
+  'SURGE': 'Surge',
+  'AMBER': 'Amber',
+  'MEG': 'Meg',
+  'BUZZ': 'Buzz',
+  'COLETTE': 'Colette',
+  'BELLE': 'Belle',
+  'FANG': 'Fang',
+  'ASH': 'Ash',
+  'LOLA': 'Lola',
+  'BUSTER': 'Buster',
+  'EVE': 'Eve',
+  'SAM': 'Sam',
+  'BONNIE': 'Bonnie',
+  'OTIS': 'Otis',
+  'JANET': 'Janet',
+  'RUFFS': 'Ruffs',
+  'GROM': 'Grom',
+  'R-T': 'R-T',
+  'MANDY': 'Mandy',
+  'CHESTER': 'Chester',
+  'GRAY': 'Gray',
+  'PEARL': 'Pearl',
+  'DOUG': 'Doug',
+  'BUSTER': 'Buster',
+  'MAISIE': 'Maisie',
+  'HANK': 'Hank',
+  'CORDELIUS': 'Cordelius',
+  'CHARLIE': 'Charlie',
+  'MELODIE': 'Melodie',
+  'ANGELO': 'Angelo',
+  'LILY': 'Lily',
+  'BERRY': 'Berry',
+  'CLANCY': 'Clancy',
+  'MICO': 'Mico',
+  'KIT': 'Kit',
+  'DRACO': 'Draco',
+  'KENJI': 'Kenji',
+  'CHUCK': 'Chuck',
+  'WILLOW': 'Willow',
+  'SIRIUS': 'Sirius',
+  'LARRY & LAWRIE': 'Larry&Lawrie',
+  'BUZZ': 'Buzz',
+  'DARRYL': 'Darryl',
+  'RICO': 'Rico',
+  'NITA': 'Nita',
+  'COLT': 'Colt',
+  'SHELLY': 'Shelly',
+  'BULL': 'Bull',
+  'JESSIE': 'Jessie',
+  'BROCK': 'Brock',
+  'POCO': 'Poco',
+  'PAM': 'Pam',
+  'BARLEY': 'Barley',
+  'CARL': 'Carl',
+  'DYNAMIKE': 'Dynamike',
+  'BO': 'Bo',
+  'EMZ': 'Emz',
+  'STU': 'Stu',
+  'EL PRIMO': 'ElPrimo',
+  'PIERCE': 'Pierce',
+  'NAJIA': 'Najia',
+  'MINA': 'Mina',
+  'GIGI': 'Gigi',
+  'DAMIAN': 'Damian',
+  'TRUNK': 'Trunk',
+  'OLLIE': 'Ollie',
+  'JUJU': 'Juju',
+  'BUZZ': 'Buzz',
+  'BUSTER': 'Buster',
+};
+
+function brawlerImgName(name) {
+  if (BRAWLER_NAME_MAP[name]) return BRAWLER_NAME_MAP[name];
+  // Generic fallback: Title Case each word
+  return name.split(' ').map(function(w) {
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join('');
+}
 function getPairStats(mode, map) { return getCtxData(mode, map).pairs || {}; }
 function allTaken()     { return new Set([...draftAllies, ...draftEnemies, ...draftAllyBans, ...draftEnemyBans]); }
+// Only picks are truly "unavailable" for picking -- bans can overlap between teams
+function allPickedOrBanned() { return new Set([...draftAllies, ...draftEnemies, ...draftAllyBans, ...draftEnemyBans]); }
+function allPicked()  { return new Set([...draftAllies, ...draftEnemies]); }
+function bannedByUs() { return new Set(draftAllyBans); }
+function bannedByEnemy() { return new Set(draftEnemyBans); }
 
 function wrColor(wr) {
   if (wr === null || wr === undefined) return 'var(--text3)';
@@ -797,7 +1117,7 @@ function renderDraft() {
   renderSlots('enemy-slots',    draftEnemies,  'enemy-pick');
   renderBrawlerGrid();
   renderSuggestions();
-  calcWinChance();
+  calcWinChance(); // async, updates meter when ready
 }
 
 function renderSlots(id, pool, cls) {
@@ -859,17 +1179,27 @@ function renderBrawlerGrid() {
   const mode = getDraftMode(), map = getDraftMap();
   const bs   = getBrawlerStats(mode, map);
   const taken = allTaken();
+  const seq = getDraftSeq(document.getElementById('draft-side').value);
+  const cur = getCurStep();
+  const step = cur < seq.length ? seq[cur] : null;
+  const inBanPhase = step && step.phase === 'ban';
+  // During ban phase, only picks block the grid. During pick phase, all taken block it.
+  const blockedForGrid = inBanPhase ? allPicked() : allPickedOrBanned();
+
   let brawlers = allBrawlers();
   if (gridSearch) brawlers = brawlers.filter(function(b) { return b.toLowerCase().includes(gridSearch); });
-  if (gridFilter === 'available') brawlers = brawlers.filter(function(b) { return !taken.has(b); });
+  if (gridFilter === 'available') brawlers = brawlers.filter(function(b) { return !blockedForGrid.has(b); });
   grid.innerHTML = brawlers.map(function(b) {
     const s = bs[b];
     const wr = s && s.wins+s.losses > 0 ? s.wins/(s.wins+s.losses) : null;
     const tier = TIERLIST[b] || '';
-    const cls = draftAllies.includes(b)||draftAllyBans.includes(b) ? 'as-ally'
-              : draftEnemies.includes(b)||draftEnemyBans.includes(b) ? 'as-enemy'
-              : taken.has(b) ? 'unavailable' : '';
-    const imgName = b.toLowerCase().replace(/ /g,'-').replace(/[^a-z0-9-]/g,'');
+    const isAllyBanned  = draftAllyBans.includes(b);
+    const isEnemyBanned = draftEnemyBans.includes(b);
+    const isPicked      = draftAllies.includes(b) || draftEnemies.includes(b);
+    const cls = (draftAllies.includes(b) || isAllyBanned) ? 'as-ally'
+              : (draftEnemies.includes(b) || isEnemyBanned) ? 'as-enemy'
+              : blockedForGrid.has(b) ? 'unavailable' : '';
+    const imgName = brawlerImgName(b);
     const imgUrl = 'https://cdn.brawlify.com/brawler-bs/' + imgName + '.png';
     return '<div class="brawler-card ' + cls + '" data-name="' + b + '" title="' + b + '">'
       + (tier ? '<div class="bc-tier tier-' + tier + '">' + tier + '</div>' : '')
@@ -881,17 +1211,20 @@ function renderBrawlerGrid() {
   grid.querySelectorAll('.brawler-card:not(.unavailable)').forEach(function(card) {
     card.addEventListener('click', function() {
       const name = card.dataset.name;
-      if (allTaken().has(name)) return;
-      const seq = getDraftSeq(document.getElementById('draft-side').value);
-      const cur = getCurStep();
-      if (cur >= seq.length) return;
-      const step = seq[cur];
-      if (step.phase==='ban') {
-        if (step.team==='ally' && draftAllyBans.length<3) draftAllyBans.push(name);
-        else if (step.team==='enemy' && draftEnemyBans.length<3) draftEnemyBans.push(name);
+      const seq2 = getDraftSeq(document.getElementById('draft-side').value);
+      const cur2 = getCurStep();
+      if (cur2 >= seq2.length) return;
+      const step2 = seq2[cur2];
+      if (step2.phase === 'ban') {
+        // Bans: only block if already PICKED (not banned -- duplicate bans allowed)
+        if (allPicked().has(name)) return;
+        if (step2.team==='ally' && draftAllyBans.length<3) draftAllyBans.push(name);
+        else if (step2.team==='enemy' && draftEnemyBans.length<3) draftEnemyBans.push(name);
       } else {
-        if (step.team==='ally' && draftAllies.length<3) draftAllies.push(name);
-        else if (step.team==='enemy' && draftEnemies.length<3) draftEnemies.push(name);
+        // Picks: block if already picked OR banned
+        if (allPickedOrBanned().has(name)) return;
+        if (step2.team==='ally' && draftAllies.length<3) draftAllies.push(name);
+        else if (step2.team==='enemy' && draftEnemies.length<3) draftEnemies.push(name);
       }
       invalidateCache(); renderDraft();
     });
@@ -914,7 +1247,10 @@ function renderSuggestions() {
   const isYour = step.team === 'ally';
   const side   = document.getElementById('draft-side').value;
   const taken  = allTaken();
-  const avail  = allBrawlers().filter(function(b) { return !taken.has(b); });
+  const inBanPhase2 = step && step.phase === 'ban';
+  const avail  = allBrawlers().filter(function(b) {
+    return inBanPhase2 ? !allPicked().has(b) : !allPickedOrBanned().has(b);
+  });
   const mode   = getDraftMode(), map = getDraftMap();
 
   if (!isYour) {
@@ -997,9 +1333,11 @@ function scoreAndRender(brawlers, isBan, isYours, mode, map, token, list, prefix
         const step = seq2[getCurStep()];
         if (!step) return;
         if (step.phase==='ban') {
+          if (allPicked().has(name)) return;
           if (step.team==='ally' && draftAllyBans.length<3) draftAllyBans.push(name);
           else if (step.team==='enemy' && draftEnemyBans.length<3) draftEnemyBans.push(name);
         } else {
+          if (allPickedOrBanned().has(name)) return;
           if (step.team==='ally' && draftAllies.length<3) draftAllies.push(name);
           else if (step.team==='enemy' && draftEnemies.length<3) draftEnemies.push(name);
         }
@@ -1257,63 +1595,168 @@ function renderMuList(){
 }
 function removeMu(key){delete OVERRIDES.matchups[key];saveOverrides();renderMuList();invalidateCache();}
 
-// WIN CHANCE METER
-function calcWinChance() {
-  const meter = document.getElementById('win-meter');
-  const fill  = document.getElementById('win-meter-fill');
-  const pct   = document.getElementById('win-meter-pct');
+// NEURAL NETWORK MODEL
+async function loadNeuralNet() {
+  if (NN_LOADING || NN_ENABLED) return;
+  NN_LOADING = true;
+  try {
+    // Load vocabulary metadata
+    const metaR = await fetch('model/model_meta.json');
+    if (!metaR.ok) throw new Error('model_meta.json not found');
+    NN_META = await metaR.json();
 
-  // Need at least 1 ally and 1 enemy pick to show meter
-  if (draftAllies.length === 0 || draftEnemies.length === 0) {
-    meter.style.display = 'none';
-    return;
+    // Load ONNX model
+    NN_MODEL = await ort.InferenceSession.create('model/model.onnx', {
+      executionProviders: ['wasm'],
+    });
+    NN_ENABLED = true;
+    console.log('Neural network loaded:', NN_META.nb, 'brawlers,',
+                NN_META.nm, 'modes,', NN_META.nmp, 'maps');
+    updateNNStatus(true);
+  } catch(e) {
+    console.warn('Neural network not available:', e.message);
+    NN_ENABLED = false;
+    updateNNStatus(false);
   }
+  NN_LOADING = false;
+}
 
-  const mode = getDraftMode(), map = getDraftMap();
+function updateNNStatus(loaded) {
+  const dot = document.getElementById('status-dot');
+  if (!dot) return;
+  if (loaded) {
+    dot.title = 'Neural network active';
+    dot.style.boxShadow = '0 0 8px var(--green)';
+  }
+}
+
+function buildNNInput(team1Names, team2Names, mode, map) {
+  if (!NN_META) return null;
+  const { brawlers, modes, maps, nb, nm, nmp } = NN_META;
+  const bi  = Object.fromEntries(brawlers.map((b,i) => [b,i]));
+  const mi  = Object.fromEntries(modes.map((m,i) => [m,i]));
+  const mpi = Object.fromEntries(maps.map((m,i)  => [m,i]));
+
+  const dim = nb*2 + nm + nmp + 1;
+  const arr = new Float32Array(dim);
+
+  // Team 1 one-hot
+  team1Names.forEach(function(b) {
+    const i = bi[b];
+    if (i !== undefined) arr[i] = 1.0;
+  });
+  // Team 2 one-hot (offset by nb)
+  team2Names.forEach(function(b) {
+    const i = bi[b];
+    if (i !== undefined) arr[nb + i] = 1.0;
+  });
+  // Mode one-hot
+  const mi_val = mi[mode];
+  if (mi_val !== undefined) arr[nb*2 + mi_val] = 1.0;
+  // Map one-hot
+  const mpi_val = mpi[map];
+  if (mpi_val !== undefined) arr[nb*2 + nm + mpi_val] = 1.0;
+  // Duration (default 0.5 = medium game)
+  arr[nb*2 + nm + nmp] = 0.5;
+
+  return arr;
+}
+
+async function nnPredict(team1Names, team2Names, mode, map) {
+  if (!NN_ENABLED || !NN_MODEL) return null;
+  try {
+    const input = buildNNInput(team1Names, team2Names, mode, map);
+    if (!input) return null;
+    const tensor = new ort.Tensor('float32', input, [1, input.length]);
+    const results = await NN_MODEL.run({ input: tensor });
+    const output  = results[Object.keys(results)[0]];
+    return output.data[0]; // win probability for team1
+  } catch(e) {
+    console.warn('NN inference error:', e);
+    return null;
+  }
+}
+
+async function nnScorePick(name, mode, map) {
+  if (!NN_ENABLED || draftEnemies.length === 0) return null;
+  // Compare team with this pick vs enemy team
+  const team1 = [...draftAllies, name];
+  const team2 = draftEnemies;
+  // Pad to 3 if needed (partial draft)
+  while (team1.length < 3) team1.push(team1[0]); // duplicate as placeholder
+  while (team2.length < 3) team2.push(team2[0]);
+  return await nnPredict(team1.slice(0,3), team2.slice(0,3), mode, map);
+}
+
+async function nnScoreBan(name, mode, map) {
+  if (!NN_ENABLED || draftAllies.length === 0) return null;
+  // If enemy picks this brawler, how bad is it?
+  const team1 = [...draftAllies];
+  const team2 = [...draftEnemies, name];
+  while (team1.length < 3) team1.push(team1[0]);
+  while (team2.length < 3) team2.push(team2[0]);
+  const prob = await nnPredict(team1.slice(0,3), team2.slice(0,3), mode, map);
+  return prob !== null ? 1 - prob : null; // high score = should ban
+}
+
+// WIN CHANCE METER
+function heuristicWinChance(mode, map) {
   const bs = getBrawlerStats(mode, map);
   const ms = getMatchupStats(mode, map);
-
-  // Win chance = average of:
-  // 1. Our team's average WR on this map
-  // 2. Our counter score vs each enemy pick (weighted by confidence)
-  // 3. Our safety score vs enemy picks
-  // Normalised to 0-100%
-
-  const ourWRs = draftAllies.map(function(b) { return rawWR(b, bs); });
-  const avgOurWR = ourWRs.reduce(function(a,b){return a+b;},0) / ourWRs.length;
-
+  const ourWRs   = draftAllies.map(function(b)  { return rawWR(b, bs); });
   const enemyWRs = draftEnemies.map(function(b) { return rawWR(b, bs); });
+  const avgOurWR   = ourWRs.reduce(function(a,b){return a+b;},0)   / ourWRs.length;
   const avgEnemyWR = enemyWRs.reduce(function(a,b){return a+b;},0) / enemyWRs.length;
-
-  // Average matchup score for each of our picks vs each of their picks
   let matchupSum = 0, matchupCount = 0;
   draftAllies.forEach(function(ally) {
     draftEnemies.forEach(function(enemy) {
-      const str = matchupStr(ally, enemy, ms);
-      const rec = ms[ally] && ms[ally][enemy];
+      const str  = matchupStr(ally, enemy, ms);
+      const rec  = ms[ally] && ms[ally][enemy];
       const conf = rec ? matchupConf(rec.wins, rec.losses) : 0.1;
-      matchupSum += str * conf;
-      matchupCount += conf;
+      matchupSum += str * conf; matchupCount += conf;
     });
   });
-  const avgMatchup = matchupCount > 0 ? matchupSum / matchupCount : 0.5;
+  const avgMatchup   = matchupCount > 0 ? matchupSum / matchupCount : 0.5;
+  const wrAdvantage  = 0.5 + (avgOurWR - avgEnemyWR);
+  return 0.55*avgMatchup + 0.30*Math.max(0,Math.min(1,wrAdvantage)) + 0.15*0.5;
+}
 
-  // Relative WR advantage: how much better is our team than enemy team on this map
-  const wrAdvantage = 0.5 + (avgOurWR - avgEnemyWR);
-
-  // Final estimate: weighted blend
-  const W_MATCHUP = 0.55; // matchup data is most direct signal
-  const W_WR_ADV  = 0.30; // map WR advantage
-  const W_BASE    = 0.15; // prior (50/50)
-  const winEst = W_MATCHUP * avgMatchup + W_WR_ADV * Math.max(0, Math.min(1, wrAdvantage)) + W_BASE * 0.5;
-  const winPct = Math.round(Math.max(20, Math.min(80, winEst * 100))); // clamp 20-80%
-
-  const color = winPct >= 55 ? 'var(--green)' : winPct <= 45 ? 'var(--red)' : 'var(--amber)';
+function updateWinMeter(prob, source) {
+  const meter = document.getElementById('win-meter');
+  const fill  = document.getElementById('win-meter-fill');
+  const pct   = document.getElementById('win-meter-pct');
+  const winPct = Math.round(Math.max(20, Math.min(80, prob * 100)));
+  const color  = winPct >= 55 ? 'var(--green)' : winPct <= 45 ? 'var(--red)' : 'var(--amber)';
   meter.style.display = 'flex';
   fill.style.width = winPct + '%';
   fill.style.background = color;
   pct.textContent = winPct + '%';
   pct.style.color = color;
+  // Show source indicator
+  const srcEl = document.getElementById('win-meter-source');
+  if (srcEl) srcEl.textContent = source === 'nn' ? 'NN' : 'est';
+}
+
+async function calcWinChance() {
+  const meter = document.getElementById('win-meter');
+  if (draftAllies.length === 0 || draftEnemies.length === 0) {
+    meter.style.display = 'none';
+    return;
+  }
+  const mode = getDraftMode(), map = getDraftMap();
+
+  // Try neural network first
+  if (NN_ENABLED && draftAllies.length === 3 && draftEnemies.length === 3) {
+    const prob = await nnPredict(draftAllies, draftEnemies, mode, map);
+    if (prob !== null) {
+      updateWinMeter(prob, 'nn');
+      return;
+    }
+  }
+
+  // Fall back to heuristic
+  const prob = heuristicWinChance(mode, map);
+  updateWinMeter(prob, 'heuristic');
 }
 
 
