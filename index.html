@@ -1282,6 +1282,32 @@ function scoreAndRender(brawlers, isBan, isYours, mode, map, token, list, prefix
   const CHUNK = 25;
   const results = [];
   let idx = 0;
+
+  async function applyNNScores() {
+    // If NN is available, blend NN scores with heuristic scores
+    if (!NN_ENABLED || results.length === 0) return;
+    // Only blend when we have enough context (at least 1 enemy picked)
+    if (draftEnemies.length === 0 && !isBan) return;
+
+    const blendWeight = 0.45; // 45% NN, 55% heuristic
+    await Promise.all(results.map(async function(c) {
+      try {
+        let nnScore = null;
+        if (!isBan) {
+          nnScore = await nnScorePick(c.name, mode, map);
+        } else if (isYours) {
+          nnScore = await nnScoreBan(c.name, mode, map);
+        }
+        if (nnScore !== null) {
+          c.score = (1 - blendWeight) * c.score + blendWeight * nnScore;
+          c.nnScore = nnScore;
+        }
+      } catch(e) { /* ignore */ }
+    }));
+    // Re-sort after NN blending
+    results.sort(function(a,b) { return b.score - a.score; });
+  }
+
   function process() {
     if (token !== _renderToken) return;
     const end = Math.min(idx + CHUNK, brawlers.length);
@@ -1293,6 +1319,15 @@ function scoreAndRender(brawlers, isBan, isYours, mode, map, token, list, prefix
     if (idx < brawlers.length) { setTimeout(process, 0); return; }
     if (token !== _renderToken) return;
     results.sort(function(a,b) { return b.score - a.score; });
+
+    // Apply NN blending then re-render
+    applyNNScores().then(function() {
+      if (token !== _renderToken) return;
+      renderRows();
+    });
+  }
+
+  function renderRows() {
     const mode2 = getDraftMode(), map2 = getDraftMap();
     const bs = getBrawlerStats(mode2, map2);
     const ms = getMatchupStats(mode2, map2);
@@ -1322,6 +1357,7 @@ function scoreAndRender(brawlers, isBan, isYours, mode, map, token, list, prefix
         + (ctr!==null ? '<div class="sg-stat"><span class="sg-stat-label">CTR</span><span class="sg-stat-val" style="color:' + wrColor(ctr) + '">' + (ctr*100).toFixed(1) + '%</span></div>' : '')
         + (saf!==null ? '<div class="sg-stat"><span class="sg-stat-label">SAF</span><span class="sg-stat-val" style="color:' + wrColor(saf) + '">' + (saf*100).toFixed(1) + '%</span></div>' : '')
         + '<span class="sg-score" style="color:' + color + '">' + (c.score*100).toFixed(1) + '</span>'
+        + (c.nnScore !== undefined ? '<span style="font-family:var(--mono);font-size:.5rem;color:var(--purple);margin-left:2px" title="Neural network score: ' + (c.nnScore*100).toFixed(1) + '%">NN</span>' : '')
         + '</div></div>';
     }).join('');
     list.innerHTML = prefixHTML + (html || '<div class="no-picks">Not enough data</div>');
@@ -1344,7 +1380,8 @@ function scoreAndRender(brawlers, isBan, isYours, mode, map, token, list, prefix
         invalidateCache(); renderDraft();
       });
     });
-  }
+  } // end renderRows
+
   setTimeout(process, 0);
 }
 
